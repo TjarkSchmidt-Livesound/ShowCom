@@ -23,8 +23,8 @@ public:
         double sampleRate     = 48000.0;
         float  thresholdDb    = -45.0f;  // RMS-Schwelle in dBFS
         float  frameMs        = 20.0f;
-        float  preRollMs      = 300.0f;  // Audio vor dem Einsatz mitnehmen (Anlaute!)
-        float  hangoverMs     = 500.0f;  // so lange unter der Schwelle, bis der Abschnitt endet
+        float  preRollMs      = 400.0f;  // Audio vor dem Einsatz mitnehmen (Anlaute!)
+        float  hangoverMs     = 700.0f;  // so lange unter der Schwelle, bis der Abschnitt endet
         float  minSpeechMs    = 250.0f;  // kürzere Abschnitte (Klicks, Huster) verwerfen
         float  maxSegmentSec  = 20.0f;   // Whisper verarbeitet max. 30 s am Stück
     };

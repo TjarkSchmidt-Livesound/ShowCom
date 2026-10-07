@@ -109,7 +109,10 @@ private:
     juce::ProgressBar progressBar { downloader.getProgress() };
     juce::ComboBox languageBox;
     juce::ToggleButton gpuToggle { "GPU benutzen (Metal / CUDA / Vulkan, falls einkompiliert)" };
-    juce::ToggleButton accurateToggle { "Genauer dekodieren (Beam-Search, etwas langsamer)" };
+    juce::Label modeLabel, vocabLabel;
+    juce::ComboBox modeBox;
+    juce::TextEditor vocabEditor;
+    juce::int64 vocabDirtyAt = 0;
     juce::ToggleButton liveToggle { txtInit ("Live-Text schon während des Sprechens (braucht mehr Rechenleistung)") };
 
     // Mein Name

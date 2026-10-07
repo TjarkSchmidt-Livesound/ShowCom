@@ -111,14 +111,29 @@ juce::String AppController::buildPrompt() const
     keywords.trim();
     keywords.removeEmptyStrings();
 
-    juce::String prompt = german ? "Talkback-Funk bei einer Live-Veranstaltung."
-                                 : "Talkback communication at a live show.";
+    // Der Prompt gibt Whisper Kontext: Thema, Schreibweise von Namen und Fachwörtern.
+    // Whisper nutzt davon maximal ~220 Tokens – deshalb knapp halten.
+    juce::String prompt = german
+        ? juce::String::fromUTF8 ("Talkback bei einer Live-Veranstaltung: FOH, Monitor, Wedge, In-Ear, Soundcheck, "
+                                  "Line-Check, Funkstrecke, Handsender, Taschensender, Bühne, Backline, Changeover.")
+        : juce::String ("Talkback at a live show: FOH, monitors, wedge, in-ear, soundcheck, line check, "
+                        "wireless, handheld, bodypack, stage, backline, changeover.");
 
     if (! people.isEmpty())
         prompt << (german ? " Beteiligte: " : " Crew: ") << people.joinIntoString (", ") << ".";
 
     if (! keywords.isEmpty())
         prompt << (german ? " Namen: " : " Names: ") << keywords.joinIntoString (", ") << ".";
+
+    juce::StringArray vocab;
+    vocab.addTokens (s.vocabulary, ",;\n", "");
+    vocab.trim();
+    vocab.removeEmptyStrings();
+    while (vocab.size() > 40)
+        vocab.remove (vocab.size() - 1);
+
+    if (! vocab.isEmpty())
+        prompt << (german ? juce::String::fromUTF8 (" Begriffe: ") : juce::String (" Terms: ")) << vocab.joinIntoString (", ") << ".";
 
     return prompt;
 }
@@ -147,7 +162,7 @@ void AppController::applyState()
     o.model = s.modelPath.isNotEmpty() ? juce::File (s.modelPath) : juce::File();
     o.language = s.language;
     o.useGpu = s.useGpu;
-    o.accurate = s.accurateDecoding;
+    o.mode = s.recognitionMode;
     o.prompt = buildPrompt();
     transcriber.setOptions (o);
 

@@ -148,6 +148,13 @@ std::vector<float> Transcriber::prepareAudio (const Job& job) const
     const int n = (int) job.audio.size();
     std::vector<float> in (job.audio);
 
+    // Trittschall/Rumpeln und Wind unter 90 Hz entfernen – stört die Erkennung, trägt keine Sprache
+    {
+        juce::IIRFilter hp;
+        hp.setCoefficients (juce::IIRCoefficients::makeHighPass (job.sampleRate, 90.0, 0.707));
+        hp.processSamples (in.data(), n);
+    }
+
     // Anti-Aliasing vor dem Heruntertakten auf 16 kHz (2 × 2. Ordnung)
     if (job.sampleRate > whisperRate)
     {
@@ -194,26 +201,31 @@ void Transcriber::transcribe (Job& job)
     const auto startMs = juce::Time::getMillisecondCounterHiRes();
     const auto pcm = prepareAudio (job);
 
-    auto params = whisper_full_default_params (activeOptions.accurate ? WHISPER_SAMPLING_BEAM_SEARCH
-                                                                      : WHISPER_SAMPLING_GREEDY);
+    // Live-Zwischenstände: schnell (sie werden ohnehin ersetzt).
+    // Endergebnisse: je nach Modus – "Genau" = volles 30-s-Fenster + Beam-Search wie Whisper-Standard.
+    const int mode = job.partial ? 0 : activeOptions.mode;
+    const bool fast = mode == 0;
+
+    auto params = whisper_full_default_params (mode == 2 ? WHISPER_SAMPLING_BEAM_SEARCH
+                                                         : WHISPER_SAMPLING_GREEDY);
 
     const std::string language = activeOptions.language.isEmpty() ? std::string ("auto")
                                                                     : activeOptions.language.toStdString();
     const std::string prompt = activeOptions.prompt.toStdString();
 
-    // Tempo: Whisper rechnet sonst immer ein 30-s-Fenster. Bei kurzen Talkback-Ansagen nur so viel
-    // Kontext wie nötig (50 Encoder-Frames pro Sekunde, plus Reserve) – das ist der größte Hebel.
+    // Verkürztes Rechenfenster (50 Encoder-Frames pro Sekunde + Reserve) ist schnell,
+    // kostet aber Genauigkeit – deshalb nur im Schnellmodus.
     const double secs = (double) pcm.size() / whisperRate;
-    const int audioCtx = juce::jlimit (384, 1500, (int) std::ceil ((secs + 1.0) * 50.0));
+    const int audioCtx = juce::jlimit (512, 1500, (int) std::ceil ((secs + 2.0) * 50.0));
 
     params.n_threads        = juce::jlimit (2, 16, juce::SystemStats::getNumPhysicalCpus());
-    params.audio_ctx        = audioCtx >= 1500 ? 0 : audioCtx;
+    params.audio_ctx        = (fast && audioCtx < 1500) ? audioCtx : 0;
     params.language         = language.c_str();
     params.detect_language  = false;
     params.translate        = false;
     params.no_context       = true;     // jeder Abschnitt unabhängig: keine Fehlerfortpflanzung
     params.no_timestamps    = true;
-    params.single_segment   = secs < 12.0;   // kurze Ansage = ein Segment, spart Dekodierschritte
+    params.single_segment   = fast;
     params.print_progress   = false;
     params.print_realtime   = false;
     params.print_special    = false;
@@ -222,13 +234,12 @@ void Transcriber::transcribe (Job& job)
     params.suppress_nst     = true;
     params.initial_prompt   = prompt.empty() ? nullptr : prompt.c_str();
     params.beam_search.beam_size = 5;
-    params.greedy.best_of        = 1;
+    params.greedy.best_of        = mode == 1 ? 3 : 5;
 
-    if (job.partial)
+    if (fast)
     {
-        // Zwischenstand: so schnell wie möglich, keine Wiederholungsversuche
-        params.strategy = WHISPER_SAMPLING_GREEDY;
-        params.temperature_inc = 0.0f;
+        params.greedy.best_of = 1;
+        params.temperature_inc = 0.0f;   // keine Wiederholungsversuche
     }
 
     if (whisper_full (ctx, params, pcm.data(), (int) pcm.size()) != 0)

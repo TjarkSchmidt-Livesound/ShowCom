@@ -112,8 +112,8 @@ static void testSegmenter()
     {
         const double len = (double) out[0].audio.size() / sr;
         const double start = (double) out[0].startSample / sr;
-        CHECK (len > 1.6 && len < 2.2);           // 1.5 s + Pre-Roll + kurzer Ausklang
-        CHECK (start > 0.6 && start < 0.75);      // ~300 ms vor dem Einsatz
+        CHECK (len > 1.8 && len < 2.4);           // 1.5 s + Pre-Roll + kurzer Ausklang
+        CHECK (start > 0.55 && start < 0.65);     // ~400 ms vor dem Einsatz
     }
 
     // Kurzer Klick wird verworfen

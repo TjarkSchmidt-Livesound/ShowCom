@@ -6,9 +6,9 @@ using Theme::txt;
 const std::vector<ModelDownloader::Model>& ModelDownloader::models()
 {
     static const std::vector<Model> list = {
-        { "ggml-large-v3-turbo-q5_0.bin", "large-v3-turbo q5  (574 MB) – beste Wahl mit Apple-Chip / GPU" },
-        { "ggml-small-q5_1.bin",          "small q5           (190 MB) – schnell, empfohlen für Intel-Macs" },
-        { "ggml-medium-q5_0.bin",         "medium q5          (539 MB) – genauer, braucht mehr Rechenzeit" },
+        { "ggml-large-v3-turbo-q5_0.bin", "large-v3-turbo q5  (574 MB) – genaueste Erkennung, empfohlen" },
+        { "ggml-medium-q5_0.bin",         "medium q5          (539 MB) – genau, etwas schneller auf älteren Rechnern" },
+        { "ggml-small-q5_1.bin",          "small q5           (190 MB) – schnell, für ältere Rechner" },
         { "ggml-large-v3-turbo.bin",      "large-v3-turbo     (1,6 GB) – höchste Qualität, nur mit GPU" },
         { "ggml-base-q5_1.bin",           "base q5            (60 MB) – sehr schnell, ungenauer" },
     };
@@ -232,11 +232,8 @@ SettingsPanel::SettingsPanel (AppController& a)
     int id = 1;
     for (auto& m : ModelDownloader::models())
         downloadBox.addItem (txt (m.label), id++);
-   #if JUCE_MAC && JUCE_ARM
-    downloadBox.setSelectedId (1, juce::dontSendNotification);   // Apple-Chip: GPU, großes Modell läuft flott
-   #else
-    downloadBox.setSelectedId (2, juce::dontSendNotification);   // nur CPU: kleines, schnelles Modell
-   #endif
+    // large-v3-turbo q5 ist bei Deutsch am genauesten; die Schnelligkeit kommt über den Live-Text.
+    downloadBox.setSelectedId (1, juce::dontSendNotification);
     content.addAndMakeVisible (downloadBox);
 
     downloadButton.onClick = [this] { startDownload(); };
@@ -271,9 +268,30 @@ SettingsPanel::SettingsPanel (AppController& a)
     content.addAndMakeVisible (languageBox);
 
     gpuToggle.onClick = [this] { store ([v = gpuToggle.getToggleState()] (AppSettings& s) { s.useGpu = v; }); };
-    accurateToggle.onClick = [this] { store ([v = accurateToggle.getToggleState()] (AppSettings& s) { s.accurateDecoding = v; }); };
+    modeLabel.setText ("Erkennung", juce::dontSendNotification);
+    modeLabel.setFont (Theme::font (13.0f, true));
+    modeLabel.setColour (juce::Label::textColourId, Theme::textDim);
+    content.addAndMakeVisible (modeLabel);
+
+    modeBox.addItem (txt ("Genau – volle Whisper-Qualität (empfohlen)"), 3);
+    modeBox.addItem (txt ("Ausgewogen – etwas schneller"), 2);
+    modeBox.addItem (txt ("Schnell – verkürztes Hörfenster, ungenauer"), 1);
+    modeBox.onChange = [this] { store ([v = modeBox.getSelectedId() - 1] (AppSettings& s) { s.recognitionMode = v; }); };
+    content.addAndMakeVisible (modeBox);
+
+    vocabLabel.setText (txt ("Eigene Begriffe (Bandname, Songtitel, Künstler, Fachwörter – kommagetrennt)"), juce::dontSendNotification);
+    vocabLabel.setFont (Theme::font (13.0f, true));
+    vocabLabel.setColour (juce::Label::textColourId, Theme::textDim);
+    content.addAndMakeVisible (vocabLabel);
+
+    vocabEditor.setFont (Theme::font (15.0f));
+    vocabEditor.setIndents (8, 7);
+    vocabEditor.setTextToShowWhenEmpty (txt ("z. B. Die Ärzte, Westerland, Shure Axient, Talkback-Mic"), Theme::textFaint);
+    vocabEditor.onTextChange = [this] { if (! loading) vocabDirtyAt = juce::Time::currentTimeMillis(); };
+    vocabEditor.onReturnKey  = [this] { vocabDirtyAt = 1; };
+    vocabEditor.onFocusLost  = [this] { if (vocabDirtyAt != 0) vocabDirtyAt = 1; };
+    content.addAndMakeVisible (vocabEditor);
     content.addAndMakeVisible (gpuToggle);
-    content.addAndMakeVisible (accurateToggle);
     liveToggle.onClick = [this] { store ([v = liveToggle.getToggleState()] (AppSettings& s) { s.liveText = v; }); };
     content.addAndMakeVisible (liveToggle);
 
@@ -316,6 +334,8 @@ SettingsPanel::~SettingsPanel()
 {
     if (keywordsDirtyAt != 0)
         store ([t = keywordsEditor.getText()] (AppSettings& s) { s.keywords = t; });
+    if (vocabDirtyAt != 0)
+        store ([t = vocabEditor.getText()] (AppSettings& s) { s.vocabulary = t; });
 }
 
 void SettingsPanel::loadFromState()
@@ -327,7 +347,9 @@ void SettingsPanel::loadFromState()
                         juce::dontSendNotification);
     languageBox.setSelectedId (s.language == "de" ? 1 : s.language == "en" ? 2 : 3, juce::dontSendNotification);
     gpuToggle.setToggleState (s.useGpu, juce::dontSendNotification);
-    accurateToggle.setToggleState (s.accurateDecoding, juce::dontSendNotification);
+    modeBox.setSelectedId (s.recognitionMode + 1, juce::dontSendNotification);
+    if (! vocabEditor.hasKeyboardFocus (true))
+        vocabEditor.setText (s.vocabulary, false);
     liveToggle.setToggleState (s.liveText, juce::dontSendNotification);
 
     if (! keywordsEditor.hasKeyboardFocus (true))
@@ -353,6 +375,12 @@ void SettingsPanel::store (const std::function<void (AppSettings&)>& change)
 
 void SettingsPanel::timerCallback()
 {
+    if (vocabDirtyAt != 0 && juce::Time::currentTimeMillis() - vocabDirtyAt > 700)
+    {
+        vocabDirtyAt = 0;
+        store ([t = vocabEditor.getText()] (AppSettings& s) { s.vocabulary = t; });
+    }
+
     // Namen nach kurzer Tipp-Pause übernehmen
     if (keywordsDirtyAt != 0 && juce::Time::currentTimeMillis() - keywordsDirtyAt > 700)
     {
@@ -521,7 +549,13 @@ void SettingsPanel::Content::resized()
     o.progressBar.setBounds (row (16));
     o.languageBox.setBounds (row (32).withWidth (320));
     o.gpuToggle.setBounds (row (26));
-    o.accurateToggle.setBounds (row (26));
+    {
+        auto r = row (32);
+        o.modeLabel.setBounds (r.removeFromLeft (110));
+        o.modeBox.setBounds (r.withWidth (juce::jmin (r.getWidth(), 420)));
+    }
+    o.vocabLabel.setBounds (row (20));
+    o.vocabEditor.setBounds (row (34));
     o.liveToggle.setBounds (row (26));
     endSection();
 

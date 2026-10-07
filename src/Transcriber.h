@@ -47,7 +47,7 @@ public:
         juce::String language = "de";
         juce::String prompt;          // Namen/Begriffe, damit Whisper sie richtig schreibt
         bool useGpu = true;
-        bool accurate = false;        // Beam-Search
+        int mode = 2;                 // 0 = schnell, 1 = ausgewogen, 2 = genau (Endergebnisse)
     };
 
     enum class ModelState { none, loading, ready, failed };

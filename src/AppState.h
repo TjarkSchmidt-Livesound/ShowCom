@@ -38,7 +38,8 @@ struct AppSettings
     bool fuzzyKeywords = true;
     bool flashAlert = true;
     bool useGpu = true;
-    bool accurateDecoding = false;      // Beam-Search statt Greedy
+    int recognitionMode = 2;            // 0 = schnell, 1 = ausgewogen, 2 = genau
+    juce::String vocabulary;            // eigene Begriffe: Bandname, Songs, Fachwörter
     bool liveText = true;               // Zwischenstände schon während des Sprechens
     juce::String audioDeviceState;      // XML von AudioDeviceManager
     std::vector<WirelessDeviceConfig> wirelessDevices;

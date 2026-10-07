@@ -27,7 +27,8 @@ AudioEngine – Verarbeitungs-Thread
    ▼
 Transcriber – eigener Thread, whisper.cpp
    │  48 kHz → 16 kHz, Pegel anheben, Halluzinationen filtern, Namen als Prompt,
-   │  Rechenfenster an die Länge der Ansage angepasst, Live-Zwischenstände nachrangig
+   │  Live-Zwischenstände schnell (verkürztes Fenster), Endergebnis genau (volles Fenster,
+   │  Beam-Search), Talkback-Fachwörter und eigene Begriffe als Kontext
    ▼
 TranscriptModel → Namenssuche (KeywordMatcher) → GUI (JUCE)
 ```
@@ -102,7 +103,7 @@ ctest --test-dir build -C Release --output-on-failure
 
 ## Erste Schritte
 
-1. **Einstellungen → Spracherkennung**: Modell wählen und *Herunterladen*. Mac mit Apple-Chip: `large-v3-turbo q5` (574 MB, beste Qualität). Intel-Mac und Windows ohne GPU: `small q5` (190 MB, schnell). Sprache: Deutsch.
+1. **Einstellungen → Spracherkennung**: Modell `large-v3-turbo q5` (574 MB, genaueste Erkennung) *Herunterladen*, Sprache Deutsch, Erkennung **Genau**. Unter *Eigene Begriffe* Bandname, Songtitel und Fachwörter eintragen – Whisper schreibt sie dann richtig.
 2. **Einstellungen → Audio-Interface**: unter Windows Typ **ASIO** und dein Interface wählen, unter macOS das CoreAudio-Gerät.
 3. **Personen**: Für jede Person *+ Person*, Name, Funktion, Avatar, **Eingang** wählen. Die **Sprach-Schwelle** (gelber Strich) knapp über das Grundrauschen bzw. Bühnen-Übersprechen stellen – der Pegelbalken zeigt live, ob Sprache erkannt wird.
 4. **Einstellungen → Mein Name**: deinen Namen und Varianten eintragen, z. B. `Tjark, Tjarki, Monitor-Tjark`. Mit *Alarm testen* prüfen.

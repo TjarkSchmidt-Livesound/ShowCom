@@ -105,8 +105,8 @@ void SpeechSegmenter::processFrame (const Callback& onSegment)
 
     if (silentFrames >= hangoverFrames)
     {
-        // Nachlauf größtenteils abschneiden, aber ~150 ms Ausklang behalten
-        const int trimFrames = std::max (0, silentFrames - std::max (1, hangoverFrames / 4));
+        // Nachlauf größtenteils abschneiden, aber ~250 ms Ausklang behalten (leise Endsilben!)
+        const int trimFrames = std::max (0, silentFrames - std::max (1, hangoverFrames * 3 / 8));
         current.resize (current.size() - (size_t) trimFrames * (size_t) frameSize);
         emit (onSegment);
         inSpeech = false;

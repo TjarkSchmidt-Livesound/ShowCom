@@ -350,7 +350,7 @@ int main()
 
             // Session-Start liegt kurz nach Gerätestart -> Offsets etwas kleiner als die Burst-Zeiten
             check (segments[0].userId == "anna", "Abschnitt gehört zur richtigen Person");
-            check (std::abs (segments[0].audio.size() / 48000.0 - 1.95) < 0.25, "Länge Abschnitt 1 plausibel (Burst + Pre-Roll + Ausklang)");
+            check (std::abs (segments[0].audio.size() / 48000.0 - 2.15) < 0.25, "Länge Abschnitt 1 plausibel (Burst + Pre-Roll + Ausklang)");
             check (std::abs ((segments[1].sessionOffsetSec - segments[0].sessionOffsetSec) - 3.0) < 0.05, "Abstand der Abschnitte stimmt (3,0 s)");
         }
     }

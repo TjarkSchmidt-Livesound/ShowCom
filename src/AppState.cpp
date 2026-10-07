@@ -65,7 +65,8 @@ void AppState::load()
             settings.fuzzyKeywords    = flag ("fuzzyKeywords", true);
             settings.flashAlert       = flag ("flashAlert", true);
             settings.useGpu           = flag ("useGpu", true);
-            settings.accurateDecoding = flag ("accurateDecoding", false);
+            settings.recognitionMode  = s->hasProperty ("recognitionMode") ? juce::jlimit (0, 2, (int) s->getProperty ("recognitionMode")) : 2;
+            settings.vocabulary       = str ("vocabulary", {});
             settings.liveText         = flag ("liveText", true);
         }
 
@@ -129,7 +130,8 @@ void AppState::save() const
     s->setProperty ("fuzzyKeywords",    settings.fuzzyKeywords);
     s->setProperty ("flashAlert",       settings.flashAlert);
     s->setProperty ("useGpu",           settings.useGpu);
-    s->setProperty ("accurateDecoding", settings.accurateDecoding);
+    s->setProperty ("recognitionMode",  settings.recognitionMode);
+    s->setProperty ("vocabulary",       settings.vocabulary);
     s->setProperty ("liveText",         settings.liveText);
 
     juce::Array<juce::var> arr;
