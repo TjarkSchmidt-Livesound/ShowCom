@@ -1,0 +1,418 @@
+#include "SettingsPanel.h"
+
+using Theme::txt;
+
+//==============================================================================
+const std::vector<ModelDownloader::Model>& ModelDownloader::models()
+{
+    static const std::vector<Model> list = {
+        { "ggml-large-v3-turbo-q5_0.bin", "large-v3-turbo q5  (574 MB) – empfohlen" },
+        { "ggml-large-v3-turbo.bin",      "large-v3-turbo     (1,6 GB) – beste Qualität, braucht GPU" },
+        { "ggml-medium-q5_0.bin",         "medium q5          (539 MB)" },
+        { "ggml-small.bin",               "small              (488 MB) – schwächere Rechner" },
+        { "ggml-base.bin",                "base               (148 MB) – nur zum Testen" },
+    };
+    return list;
+}
+
+ModelDownloader::~ModelDownloader()
+{
+    alive->store (false);
+    task.reset();
+}
+
+bool ModelDownloader::start (const juce::String& fileName)
+{
+    if (task != nullptr)
+        return false;
+
+    target = AppState::getModelsDir().getChildFile (fileName);
+    partFile = target.withFileExtension (".part");
+    partFile.deleteFile();
+    atomicProgress.store (0.0);
+    progressValue = 0.0;
+
+    juce::URL url ("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/" + fileName);
+    task = url.downloadToFile (partFile, juce::URL::DownloadTaskOptions().withListener (this));
+    return task != nullptr;
+}
+
+void ModelDownloader::cancel()
+{
+    task.reset();
+    partFile.deleteFile();
+    atomicProgress.store (0.0);
+}
+
+void ModelDownloader::progress (juce::URL::DownloadTask*, juce::int64 downloaded, juce::int64 total)
+{
+    if (total > 0)
+        atomicProgress.store ((double) downloaded / (double) total);
+    else
+        atomicProgress.store (-1.0);   // unbekannte Größe: ProgressBar zeigt Animation
+}
+
+void ModelDownloader::finished (juce::URL::DownloadTask* t, bool success)
+{
+    const bool httpOk = t->statusCode() == 0 || (t->statusCode() >= 200 && t->statusCode() < 300);
+    const auto code = t->statusCode();
+
+    juce::MessageManager::callAsync ([this, flag = alive, success, httpOk, code]
+    {
+        if (! flag->load())
+            return;
+
+        task.reset();
+
+        juce::String error;
+        // Kleine Dateien sind HTML-Fehlerseiten, keine Modelle
+        const bool plausible = partFile.getSize() > 10 * 1024 * 1024;
+
+        if (success && httpOk && plausible && partFile.moveFileTo (target))
+        {
+            atomicProgress.store (1.0);
+            if (onFinished) onFinished (true, target, {});
+            return;
+        }
+
+        error = success ? ("Server-Antwort " + juce::String (code)) : juce::String ("Verbindung fehlgeschlagen");
+        partFile.deleteFile();
+        atomicProgress.store (0.0);
+        if (onFinished) onFinished (false, {}, error);
+    });
+}
+
+//==============================================================================
+SettingsPanel::SettingsPanel (AppController& a)
+    : app (a),
+      deviceSelector (a.engine.getDeviceManager(), 0, AudioEngine::maxChannels, 0, 0, false, false, false, false)
+{
+    viewport.setViewedComponent (&content, false);
+    viewport.setScrollBarsShown (true, false);
+    addAndMakeVisible (viewport);
+
+    auto styleHint = [] (juce::Label& l)
+    {
+        l.setFont (Theme::font (13.0f));
+        l.setColour (juce::Label::textColourId, Theme::textDim);
+        l.setJustificationType (juce::Justification::topLeft);
+    };
+
+    // --- Audio --------------------------------------------------------------
+    content.addAndMakeVisible (deviceSelector);
+    audioHint.setText (txt (
+                           #if JUCE_WINDOWS
+                            "Windows: Als Gerätetyp „ASIO“ wählen und unter „Active input channels“ die "
+                            "Talkback-Kanäle aktivieren (zugewiesene Eingänge werden automatisch eingeschaltet). "
+                            "Viele ASIO-Treiber erlauben nur ein Programm gleichzeitig – läuft parallel ein "
+                            "Mitschnitt-DAW auf demselben Interface, einen Multi-Client-Treiber oder ein zweites "
+                            "Interface (z. B. Dante Virtual Soundcard / AVB) verwenden."
+                           #else
+                            "macOS: Das Interface erscheint unter „CoreAudio“. Mehrere Programme können es "
+                            "gleichzeitig nutzen. Beim ersten Start fragt macOS nach Mikrofon-Zugriff – bitte erlauben."
+                           #endif
+                           ), juce::dontSendNotification);
+    styleHint (audioHint);
+    content.addAndMakeVisible (audioHint);
+
+    // --- Transkription -----------------------------------------------------
+    modelLabel.setFont (Theme::font (15.0f, true));
+    content.addAndMakeVisible (modelLabel);
+    styleHint (modelStatus);
+    content.addAndMakeVisible (modelStatus);
+
+    chooseModelButton.onClick = [this] { chooseModelFile(); };
+    content.addAndMakeVisible (chooseModelButton);
+
+    int id = 1;
+    for (auto& m : ModelDownloader::models())
+        downloadBox.addItem (txt (m.label), id++);
+    downloadBox.setSelectedId (1, juce::dontSendNotification);
+    content.addAndMakeVisible (downloadBox);
+
+    downloadButton.onClick = [this] { startDownload(); };
+    content.addAndMakeVisible (downloadButton);
+    content.addChildComponent (progressBar);
+
+    downloader.onFinished = [this] (bool ok, juce::File file, juce::String error)
+    {
+        progressBar.setVisible (false);
+        downloadButton.setButtonText ("Herunterladen");
+
+        if (ok)
+            store ([file] (AppSettings& s) { s.modelPath = file.getFullPathName(); });
+        else
+            juce::AlertWindow::showAsync (juce::MessageBoxOptions()
+                                              .withIconType (juce::MessageBoxIconType::WarningIcon)
+                                              .withTitle ("Download fehlgeschlagen")
+                                              .withMessage (error + txt ("\n\nAlternativ das Modell im Browser laden und über „Modelldatei wählen …“ einbinden:\n"
+                                                                         "huggingface.co/ggerganov/whisper.cpp"))
+                                              .withButton ("OK"),
+                                          nullptr);
+    };
+
+    languageBox.addItem ("Deutsch", 1);
+    languageBox.addItem ("Englisch", 2);
+    languageBox.addItem ("Automatisch erkennen (gemischt)", 3);
+    languageBox.onChange = [this]
+    {
+        const int sel = languageBox.getSelectedId();
+        store ([sel] (AppSettings& s) { s.language = sel == 1 ? "de" : sel == 2 ? "en" : "auto"; });
+    };
+    content.addAndMakeVisible (languageBox);
+
+    gpuToggle.onClick = [this] { store ([v = gpuToggle.getToggleState()] (AppSettings& s) { s.useGpu = v; }); };
+    accurateToggle.onClick = [this] { store ([v = accurateToggle.getToggleState()] (AppSettings& s) { s.accurateDecoding = v; }); };
+    content.addAndMakeVisible (gpuToggle);
+    content.addAndMakeVisible (accurateToggle);
+
+    // --- Mein Name ---------------------------------------------------------
+    keywordsHint.setText (txt ("Dein Name und Varianten, kommagetrennt – z. B. „Timon, Timo, Monitor-Timon“. "
+                               "Wird einer davon erwähnt, erscheint oben ein Alarm und der Beitrag wird markiert. "
+                               "Die Namen helfen außerdem der Spracherkennung, sie richtig zu schreiben."),
+                          juce::dontSendNotification);
+    styleHint (keywordsHint);
+    content.addAndMakeVisible (keywordsHint);
+
+    keywordsEditor.setFont (Theme::font (18.0f, true));
+    keywordsEditor.setIndents (10, 10);
+    keywordsEditor.setTextToShowWhenEmpty ("Dein Name, Spitzname, Funktion ...", Theme::textFaint);
+    keywordsEditor.onTextChange = [this] { if (! loading) keywordsDirtyAt = juce::Time::currentTimeMillis(); };
+    keywordsEditor.onReturnKey  = [this] { keywordsDirtyAt = 1; };
+    keywordsEditor.onFocusLost  = [this] { if (keywordsDirtyAt != 0) keywordsDirtyAt = 1; };
+    content.addAndMakeVisible (keywordsEditor);
+
+    fuzzyToggle.onClick = [this] { store ([v = fuzzyToggle.getToggleState()] (AppSettings& s) { s.fuzzyKeywords = v; }); };
+    flashToggle.onClick = [this] { store ([v = flashToggle.getToggleState()] (AppSettings& s) { s.flashAlert = v; }); };
+    content.addAndMakeVisible (fuzzyToggle);
+    content.addAndMakeVisible (flashToggle);
+
+    testAlertButton.setColour (juce::TextButton::buttonColourId, Theme::alert.withAlpha (0.35f));
+    testAlertButton.onClick = [this]
+    {
+        if (keywordsDirtyAt != 0)
+            timerCallback();   // ungespeicherte Eingabe zuerst übernehmen
+
+        app.injectTestMention();
+    };
+    content.addAndMakeVisible (testAlertButton);
+
+    // --- Aufnahme ----------------------------------------------------------
+    recordToggle.onClick = [this] { store ([v = recordToggle.getToggleState()] (AppSettings& s) { s.recordAudio = v; }); };
+    content.addAndMakeVisible (recordToggle);
+
+    folderLabel.setFont (Theme::font (14.0f));
+    folderLabel.setColour (juce::Label::textColourId, Theme::text);
+    content.addAndMakeVisible (folderLabel);
+
+    chooseFolderButton.onClick = [this] { chooseRecordingsFolder(); };
+    openFolderButton.onClick = [this]
+    {
+        auto dir = app.state.getRecordingsDir();
+        dir.createDirectory();
+        dir.startAsProcess();
+    };
+    content.addAndMakeVisible (chooseFolderButton);
+    content.addAndMakeVisible (openFolderButton);
+
+    loadFromState();
+    startTimerHz (5);
+}
+
+SettingsPanel::~SettingsPanel()
+{
+    if (keywordsDirtyAt != 0)
+        store ([t = keywordsEditor.getText()] (AppSettings& s) { s.keywords = t; });
+}
+
+void SettingsPanel::loadFromState()
+{
+    const juce::ScopedValueSetter<bool> svs (loading, true);
+    const auto& s = app.state.getSettings();
+
+    modelLabel.setText (s.modelPath.isEmpty() ? txt ("Kein Modell gewählt") : juce::File (s.modelPath).getFileName(),
+                        juce::dontSendNotification);
+    languageBox.setSelectedId (s.language == "de" ? 1 : s.language == "en" ? 2 : 3, juce::dontSendNotification);
+    gpuToggle.setToggleState (s.useGpu, juce::dontSendNotification);
+    accurateToggle.setToggleState (s.accurateDecoding, juce::dontSendNotification);
+
+    if (! keywordsEditor.hasKeyboardFocus (true))
+        keywordsEditor.setText (s.keywords, false);
+
+    fuzzyToggle.setToggleState (s.fuzzyKeywords, juce::dontSendNotification);
+    flashToggle.setToggleState (s.flashAlert, juce::dontSendNotification);
+    recordToggle.setToggleState (s.recordAudio, juce::dontSendNotification);
+    folderLabel.setText (app.state.getRecordingsDir().getFullPathName(), juce::dontSendNotification);
+}
+
+void SettingsPanel::store (const std::function<void (AppSettings&)>& change)
+{
+    if (loading)
+        return;
+
+    auto s = app.state.getSettings();
+    change (s);
+    app.state.updateSettings (s);
+    loadFromState();
+}
+
+void SettingsPanel::timerCallback()
+{
+    // Namen nach kurzer Tipp-Pause übernehmen
+    if (keywordsDirtyAt != 0 && juce::Time::currentTimeMillis() - keywordsDirtyAt > 700)
+    {
+        keywordsDirtyAt = 0;
+        store ([t = keywordsEditor.getText()] (AppSettings& s) { s.keywords = t; });
+    }
+
+    downloader.syncProgress();
+
+    auto status = app.transcriber.getModelStatusText();
+    if (app.transcriber.getModelState() == Transcriber::ModelState::none)
+        status = txt ("Unten ein Modell herunterladen oder eine vorhandene ggml-Datei wählen.");
+    if (app.transcriber.getModelState() == Transcriber::ModelState::ready && app.transcriber.getLastRealtimeFactor() > 0.0)
+        status << txt ("  ·  letzte Rechenzeit: ") << juce::String (app.transcriber.getLastRealtimeFactor() * 100.0, 0)
+               << txt (" % der Sprechdauer");
+    modelStatus.setText (status, juce::dontSendNotification);
+}
+
+void SettingsPanel::chooseModelFile()
+{
+    chooser = std::make_unique<juce::FileChooser> ("Whisper-Modell (ggml-*.bin)", AppState::getModelsDir(), "*.bin");
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                          [safe = juce::Component::SafePointer<SettingsPanel> (this)] (const juce::FileChooser& fc)
+                          {
+                              if (safe != nullptr && fc.getResult().existsAsFile())
+                                  safe->store ([f = fc.getResult()] (AppSettings& s) { s.modelPath = f.getFullPathName(); });
+                          });
+}
+
+void SettingsPanel::chooseRecordingsFolder()
+{
+    chooser = std::make_unique<juce::FileChooser> (txt ("Ordner für Mitschnitte"), app.state.getRecordingsDir());
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                          [safe = juce::Component::SafePointer<SettingsPanel> (this)] (const juce::FileChooser& fc)
+                          {
+                              if (safe != nullptr && fc.getResult().isDirectory())
+                                  safe->store ([f = fc.getResult()] (AppSettings& s) { s.recordingsDir = f.getFullPathName(); });
+                          });
+}
+
+void SettingsPanel::startDownload()
+{
+    if (downloader.isRunning())
+    {
+        downloader.cancel();
+        progressBar.setVisible (false);
+        downloadButton.setButtonText ("Herunterladen");
+        return;
+    }
+
+    const auto index = (size_t) juce::jmax (0, downloadBox.getSelectedId() - 1);
+    const auto fileName = juce::String (ModelDownloader::models()[index].file);
+    const auto existing = AppState::getModelsDir().getChildFile (fileName);
+
+    if (existing.existsAsFile())
+    {
+        store ([existing] (AppSettings& s) { s.modelPath = existing.getFullPathName(); });
+        return;
+    }
+
+    if (downloader.start (fileName))
+    {
+        progressBar.setVisible (true);
+        downloadButton.setButtonText ("Abbrechen");
+    }
+}
+
+//==============================================================================
+void SettingsPanel::paint (juce::Graphics& g)
+{
+    g.fillAll (Theme::background);
+}
+
+void SettingsPanel::resized()
+{
+    viewport.setBounds (getLocalBounds());
+    content.setSize (viewport.getMaximumVisibleWidth(), 10);
+    content.resized();
+}
+
+void SettingsPanel::Content::paint (juce::Graphics& g)
+{
+    g.fillAll (Theme::background);
+
+    for (auto& s : owner.sections)
+    {
+        g.setColour (Theme::panel);
+        g.fillRoundedRectangle (s.area.toFloat(), 10.0f);
+        g.setColour (Theme::text);
+        g.setFont (Theme::font (18.0f, true));
+        g.drawText (s.title, s.area.reduced (20, 0).withHeight (48), juce::Justification::centredLeft);
+    }
+}
+
+void SettingsPanel::Content::resized()
+{
+    auto& o = owner;
+    o.sections.clear();
+
+    const int w = juce::jmin (getWidth() - 32, 860);
+    const int x = 16;
+    int y = 16;
+
+    auto beginSection = [&] (const juce::String& title) { o.sections.push_back ({ title, { x, y, w, 0 } }); y += 52; };
+    auto endSection   = [&] { auto& s = o.sections.back(); s.area.setHeight (y - s.area.getY() + 16); y += 32; };
+    auto row = [&] (int h) { auto r = juce::Rectangle<int> (x + 20, y, w - 40, h); y += h + 10; return r; };
+
+    beginSection ("Audio-Interface");
+    o.deviceSelector.setBounds (row (330).withTrimmedLeft (-10));
+    y = o.deviceSelector.getBottom() + 10;
+    o.audioHint.setBounds (row (64));
+    endSection();
+
+    beginSection ("Spracherkennung");
+    {
+        auto r = row (30);
+        o.chooseModelButton.setBounds (r.removeFromRight (190));
+        o.modelLabel.setBounds (r);
+    }
+    o.modelStatus.setBounds (row (20));
+    {
+        auto r = row (32);
+        o.downloadButton.setBounds (r.removeFromRight (140));
+        r.removeFromRight (10);
+        o.downloadBox.setBounds (r);
+    }
+    o.progressBar.setBounds (row (16));
+    o.languageBox.setBounds (row (32).withWidth (320));
+    o.gpuToggle.setBounds (row (26));
+    o.accurateToggle.setBounds (row (26));
+    endSection();
+
+    beginSection (txt ("Mein Name – Erwähnungs-Alarm"));
+    o.keywordsHint.setBounds (row (60));
+    o.keywordsEditor.setBounds (row (44));
+    o.fuzzyToggle.setBounds (row (26));
+    {
+        auto r = row (32);
+        o.testAlertButton.setBounds (r.removeFromRight (160));
+        o.flashToggle.setBounds (r);
+    }
+    endSection();
+
+    beginSection ("Mitschnitt");
+    o.recordToggle.setBounds (row (26));
+    {
+        auto r = row (32);
+        o.openFolderButton.setBounds (r.removeFromRight (140));
+        r.removeFromRight (10);
+        o.chooseFolderButton.setBounds (r.removeFromRight (160));
+        r.removeFromRight (10);
+        o.folderLabel.setBounds (r);
+    }
+    endSection();
+
+    setSize (getWidth(), y);
+    repaint();
+}

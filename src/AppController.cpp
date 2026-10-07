@@ -1,0 +1,245 @@
+#include "AppController.h"
+
+AppController::AppController()
+{
+    state.load();
+
+    transcriber.onResult = [this] (const Transcriber::Result& r)
+    {
+        TranscriptEntry e;
+        e.userId = r.userId;
+        e.time = r.wallClock;
+        e.sessionOffsetSec = r.sessionOffsetSec;
+        e.durationSec = r.durationSec;
+        e.text = r.text;
+
+        if (auto* u = state.findUser (r.userId))
+            e.speakerName = u->name;
+        else
+            e.speakerName = "Unbekannt";
+
+        transcript.add (std::move (e));
+    };
+
+    // Läuft auf dem Verarbeitungs-Thread der Engine; enqueue ist thread-sicher.
+    engine.onSegment = [this] (AudioEngine::Segment&& s)
+    {
+        Transcriber::Job job;
+        job.userId = s.userId;
+        job.audio = std::move (s.audio);
+        job.sampleRate = s.sampleRate;
+        job.sessionOffsetSec = s.sessionOffsetSec;
+        job.wallClock = s.wallClock;
+        transcriber.enqueue (std::move (job));
+    };
+
+    const auto error = engine.initialise (state.getSettings().audioDeviceState);
+    if (error.isNotEmpty())
+        DBG ("Audio init: " << error);
+
+    engine.getDeviceManager().addChangeListener (this);
+    state.addChangeListener (this);
+    applyState();
+}
+
+AppController::~AppController()
+{
+    stopSession();
+    stopTimer();
+    transcript.stopLog();
+    state.removeChangeListener (this);
+    engine.getDeviceManager().removeChangeListener (this);
+    state.setAudioDeviceState (engine.createStateXml());
+}
+
+//==============================================================================
+void AppController::changeListenerCallback (juce::ChangeBroadcaster* source)
+{
+    if (source == &engine.getDeviceManager())
+    {
+        state.setAudioDeviceState (engine.createStateXml());
+        applyState();   // Kanal-Zuordnung nach Gerätewechsel erneut anwenden
+
+        if (onAudioDeviceChanged)
+            onAudioDeviceChanged();
+
+        return;
+    }
+
+    applyState();
+}
+
+void AppController::timerCallback()
+{
+    // Spätestens nach 2 Minuten schließen, auch wenn noch etwas in der Warteschlange hängt
+    if ((transcriber.getQueueSize() == 0 && ! transcriber.isBusy()) || ++closeWaitTicks > 480)
+    {
+        stopTimer();
+        closeWaitTicks = 0;
+        transcript.stopLog();
+    }
+}
+
+juce::String AppController::buildPrompt() const
+{
+    const auto& s = state.getSettings();
+    const bool german = s.language == "de" || s.language == "auto";
+
+    juce::StringArray people;
+    for (auto& u : state.getUsers())
+        people.add (u.role.isNotEmpty() ? u.name + " (" + u.role + ")" : u.name);
+
+    juce::StringArray keywords;
+    keywords.addTokens (s.keywords, ",;\n", "");
+    keywords.trim();
+    keywords.removeEmptyStrings();
+
+    juce::String prompt = german ? "Talkback-Funk bei einer Live-Veranstaltung."
+                                 : "Talkback communication at a live show.";
+
+    if (! people.isEmpty())
+        prompt << (german ? " Beteiligte: " : " Crew: ") << people.joinIntoString (", ") << ".";
+
+    if (! keywords.isEmpty())
+        prompt << (german ? " Namen: " : " Names: ") << keywords.joinIntoString (", ") << ".";
+
+    return prompt;
+}
+
+void AppController::applyState()
+{
+    const auto& s = state.getSettings();
+
+    std::vector<AudioEngine::Assignment> assignments;
+    for (auto& u : state.getUsers())
+    {
+        if (u.channel < 0)
+            continue;
+
+        AudioEngine::Assignment a;
+        a.userId = u.id;
+        a.fileStem = u.name.isNotEmpty() ? u.name : "Person";
+        a.channel = u.channel;
+        a.thresholdDb = u.thresholdDb;
+        assignments.push_back (a);
+    }
+    engine.setAssignments (assignments);
+
+    Transcriber::Options o;
+    o.model = s.modelPath.isNotEmpty() ? juce::File (s.modelPath) : juce::File();
+    o.language = s.language;
+    o.useGpu = s.useGpu;
+    o.accurate = s.accurateDecoding;
+    o.prompt = buildPrompt();
+    transcriber.setOptions (o);
+
+    if (! keywordsApplied || appliedKeywords != s.keywords || appliedFuzzy != s.fuzzyKeywords)
+    {
+        transcript.setKeywords (s.keywords, s.fuzzyKeywords);
+        appliedKeywords = s.keywords;
+        appliedFuzzy = s.fuzzyKeywords;
+        keywordsApplied = true;
+    }
+}
+
+//==============================================================================
+bool AppController::startSession (juce::String& errorOut)
+{
+    if (engine.isSessionRunning())
+        return true;
+
+    const auto folder = state.getRecordingsDir()
+                            .getChildFile (juce::Time::getCurrentTime().formatted ("%Y-%m-%d_%H-%M-%S"));
+
+    if (! engine.startSession (folder, state.getSettings().recordAudio, errorOut))
+        return false;
+
+    stopTimer();
+    lastSessionFolder = folder;
+    transcript.startLog (folder);   // schließt ggf. das Protokoll der vorigen Session
+
+    if (onSessionStateChanged)
+        onSessionStateChanged();
+
+    return true;
+}
+
+void AppController::stopSession()
+{
+    if (! engine.isSessionRunning())
+        return;
+
+    engine.stopSession();
+
+    // Die letzten Abschnitte werden evtl. noch transkribiert: Protokoll erst danach schließen.
+    startTimer (250);
+
+    if (onSessionStateChanged)
+        onSessionStateChanged();
+}
+
+void AppController::injectTestMention()
+{
+    const auto& s = state.getSettings();
+
+    juce::StringArray keywords;
+    keywords.addTokens (s.keywords, ",;\n", "");
+    keywords.trim();
+    keywords.removeEmptyStrings();
+
+    TranscriptEntry e;
+    e.time = juce::Time::getCurrentTime();
+    e.speakerName = "Test";
+
+    if (! state.getUsers().empty())
+    {
+        e.userId = state.getUsers().front().id;
+        e.speakerName = state.getUsers().front().name;
+    }
+
+    e.text = keywords.isEmpty() ? juce::String ("Test: Bitte trage zuerst deinen Namen in den Einstellungen ein.")
+                                : keywords[0] + juce::String::fromUTF8 (", kannst du mal kurz zur Bühne kommen? (Testalarm)");
+    transcript.add (std::move (e));
+}
+
+void AppController::injectDemoConversation()
+{
+    const auto& users = state.getUsers();
+    if (users.empty())
+        return;
+
+    juce::StringArray keywords;
+    keywords.addTokens (state.getSettings().keywords, ",;\n", "");
+    keywords.trim();
+    keywords.removeEmptyStrings();
+    const auto me = keywords.isEmpty() ? juce::String ("Timon") : keywords[0];
+
+    const char* lines[] = {
+        "Check, check, eins zwei. Hört mich jemand auf dem Talkback?",
+        "Ja, laut und deutlich. Kannst du auf Wedge drei etwas mehr Gitarre geben?",
+        "Mach ich. Wie ist es jetzt?",
+        "Perfekt, danke. Sänger möchte bei Song vier weniger Hall im Ear.",
+        "%NAME%, kannst du kurz zum Monitorplatz kommen? Der Funkempfänger von Mikro sieben hat Aussetzer.",
+        "Bin unterwegs. Licht, gebt mir bitte kurz Arbeitslicht auf der Seitenbühne.",
+        "Arbeitslicht ist an. Noch fünf Minuten bis Einlass, bitte alle bereit machen.",
+        "Changeover nach Song sechs: Akustikgitarre steht links neben dem Drumriser.",
+    };
+
+    auto t = juce::Time::getCurrentTime() - juce::RelativeTime::minutes (6);
+    int i = 0;
+
+    for (auto* l : lines)
+    {
+        const auto& u = users[(size_t) (i % (int) users.size())];
+        TranscriptEntry e;
+        e.userId = u.id;
+        e.speakerName = u.name;
+        e.time = t;
+        e.durationSec = 3.0;
+        e.text = juce::String::fromUTF8 (l).replace ("%NAME%", me);
+        transcript.add (std::move (e));
+
+        t = t + juce::RelativeTime::seconds (25 + 17 * (i % 3));
+        ++i;
+    }
+}
