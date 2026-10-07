@@ -76,20 +76,39 @@ jobs:
       - name: Tests
         run: ctest --test-dir build -C Release --output-on-failure
 
-  # Bei einem Tag wie "v0.1.0" werden EXE und DMG als GitHub-Release veröffentlicht.
+  # Nach jedem erfolgreichen Build auf "main" werden EXE und DMG als GitHub-Release
+  # zur Version aus CMakeLists.txt veröffentlicht (z. B. v0.1.0). Neue Builds derselben
+  # Version ersetzen die Dateien; für ein neues Release die Version in CMakeLists.txt erhöhen.
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     needs: [windows, macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Version bestimmen
+        id: version
+        run: |
+          VERSION=$(sed -n 's/^project([^ ]* VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
+
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ShowCom ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          body: |
+            **Windows:** `ShowCom-Windows.exe` herunterladen und starten. SmartScreen-Warnung: „Weitere Informationen → Trotzdem ausführen“.
+            **macOS (Apple Silicon):** `ShowCom-macOS.dmg` öffnen, ShowCom in „Programme“ ziehen. Beim ersten Start Rechtsklick → „Öffnen“.
+
+            Danach in ShowCom unter *Einstellungen* ein Spracherkennungs-Modell herunterladen.
           files: |
             dist/ShowCom-Windows.exe
             dist/ShowCom-macOS.dmg

@@ -81,7 +81,7 @@ Das Repository enthält `.github/workflows/build.yml`. Nach einem Push auf GitHu
 - **Windows** mit ASIO (das SDK wird mit Prüfsumme geladen),
 - **macOS** für Apple Silicon (ad-hoc signiert).
 
-Die fertigen Programme liegen unter *Actions → letzter Lauf → Artifacts*: `ShowCom-Windows.exe` und `ShowCom-macOS.dmg`. Wird ein Tag wie `v0.1.0` gepusht, landen beide zusätzlich als Download unter *Releases*. Da die Mac-App nicht notarisiert ist: beim ersten Öffnen Rechtsklick → *Öffnen*, oder `xattr -dr com.apple.quarantine "ShowCom.app"`.
+Die fertigen Programme liegen unter *Actions → letzter Lauf → Artifacts*: `ShowCom-Windows.exe` und `ShowCom-macOS.dmg`. Nach jedem erfolgreichen Build auf `main` stehen beide außerdem unter *Releases* zum Download (Version aus `CMakeLists.txt`). Da die Mac-App nicht notarisiert ist: beim ersten Öffnen Rechtsklick → *Öffnen*, oder `xattr -dr com.apple.quarantine "ShowCom.app"`.
 
 ### Tests
 
