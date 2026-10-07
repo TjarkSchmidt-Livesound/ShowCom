@@ -55,7 +55,7 @@ private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void timerCallback() override;
 
-    void toggleSession();
+    void toggleListening();
     void syncUserTabs();
     void updateMentionTabName();
     void jumpToEntry (juce::int64 id);
@@ -64,7 +64,7 @@ private:
     AppController& app;
     Theme::LookAndFeel lnf;
 
-    juce::TextButton sessionButton;
+    juce::TextButton listenButton;
     juce::Label statusLabel;
     juce::Rectangle<int> headerArea, presenceArea;
     AlertBanner banner { app };

@@ -31,15 +31,6 @@ juce::File AppState::getAppDataDir()
 juce::File AppState::getAvatarDir()     { return getAppDataDir().getChildFile ("avatars"); }
 juce::File AppState::getModelsDir()     { return getAppDataDir().getChildFile ("models"); }
 
-juce::File AppState::getRecordingsDir() const
-{
-    if (settings.recordingsDir.isNotEmpty() && juce::File::isAbsolutePath (settings.recordingsDir))
-        return juce::File (settings.recordingsDir);
-
-    return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
-               .getChildFile ("ShowCom");
-}
-
 juce::Colour AppState::paletteColour (int index)
 {
     static const juce::uint32 palette[] = {
@@ -70,11 +61,9 @@ void AppState::load()
             settings.modelPath        = str ("modelPath", {});
             settings.language         = str ("language", "de");
             settings.keywords         = str ("keywords", {});
-            settings.recordingsDir    = str ("recordingsDir", {});
             settings.audioDeviceState = str ("audioDeviceState", {});
             settings.fuzzyKeywords    = flag ("fuzzyKeywords", true);
             settings.flashAlert       = flag ("flashAlert", true);
-            settings.recordAudio      = flag ("recordAudio", true);
             settings.useGpu           = flag ("useGpu", true);
             settings.accurateDecoding = flag ("accurateDecoding", false);
         }
@@ -135,11 +124,9 @@ void AppState::save() const
     s->setProperty ("modelPath",        settings.modelPath);
     s->setProperty ("language",         settings.language);
     s->setProperty ("keywords",         settings.keywords);
-    s->setProperty ("recordingsDir",    settings.recordingsDir);
     s->setProperty ("audioDeviceState", settings.audioDeviceState);
     s->setProperty ("fuzzyKeywords",    settings.fuzzyKeywords);
     s->setProperty ("flashAlert",       settings.flashAlert);
-    s->setProperty ("recordAudio",      settings.recordAudio);
     s->setProperty ("useGpu",           settings.useGpu);
     s->setProperty ("accurateDecoding", settings.accurateDecoding);
 

@@ -10,13 +10,11 @@
     Hält die Kernobjekte zusammen und verdrahtet sie:
 
         Audio-Interface -> AudioEngine -> Transcriber -> TranscriptModel -> GUI
-                                    \-> WAV-Dateien
 
     Reihenfolge der Member ist wichtig: engine wird zuerst zerstört (stoppt Audio),
     dann transcriber, dann transcript und state.
 */
-class AppController : private juce::ChangeListener,
-                      private juce::Timer
+class AppController : private juce::ChangeListener
 {
 public:
     AppController();
@@ -28,10 +26,9 @@ public:
     Transcriber transcriber;
     AudioEngine engine;
 
-    bool startSession (juce::String& errorOut);
-    void stopSession();
-    bool isSessionRunning() const               { return engine.isSessionRunning(); }
-    juce::File getLastSessionFolder() const     { return lastSessionFolder; }
+    /** Zuhören an/aus. Läuft ab Programmstart; Pause z. B. in der Umbaupause. */
+    void setListening (bool shouldListen);
+    bool isListening() const                    { return engine.isListening(); }
 
     /** Löst einen Test-Eintrag mit Erwähnung aus (Einstellungen -> "Alarm testen"). */
     void injectTestMention();
@@ -49,19 +46,16 @@ public:
     };
     RfInfo getRfInfo (const UserProfile&) const;
 
-    std::function<void()> onSessionStateChanged;
+    std::function<void()> onListeningChanged;
     std::function<void()> onAudioDeviceChanged;
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
-    void timerCallback() override;   // schließt das Protokoll, sobald die Transkription fertig ist
     void applyState();
     juce::String buildPrompt() const;
 
-    juce::File lastSessionFolder;
     juce::String appliedKeywords;
     bool appliedFuzzy = true;
     bool keywordsApplied = false;
-    int closeWaitTicks = 0;
     bool demoMode = false;
 };

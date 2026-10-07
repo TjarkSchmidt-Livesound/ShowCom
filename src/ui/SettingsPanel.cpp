@@ -302,24 +302,6 @@ SettingsPanel::SettingsPanel (AppController& a)
     };
     content.addAndMakeVisible (testAlertButton);
 
-    // --- Aufnahme ----------------------------------------------------------
-    recordToggle.onClick = [this] { store ([v = recordToggle.getToggleState()] (AppSettings& s) { s.recordAudio = v; }); };
-    content.addAndMakeVisible (recordToggle);
-
-    folderLabel.setFont (Theme::font (14.0f));
-    folderLabel.setColour (juce::Label::textColourId, Theme::text);
-    content.addAndMakeVisible (folderLabel);
-
-    chooseFolderButton.onClick = [this] { chooseRecordingsFolder(); };
-    openFolderButton.onClick = [this]
-    {
-        auto dir = app.state.getRecordingsDir();
-        dir.createDirectory();
-        dir.startAsProcess();
-    };
-    content.addAndMakeVisible (chooseFolderButton);
-    content.addAndMakeVisible (openFolderButton);
-
     loadFromState();
     startTimerHz (5);
 }
@@ -346,11 +328,9 @@ void SettingsPanel::loadFromState()
 
     fuzzyToggle.setToggleState (s.fuzzyKeywords, juce::dontSendNotification);
     flashToggle.setToggleState (s.flashAlert, juce::dontSendNotification);
-    recordToggle.setToggleState (s.recordAudio, juce::dontSendNotification);
 
     if ((int) s.wirelessDevices.size() != wirelessRows.size())
         rebuildWirelessRows();
-    folderLabel.setText (app.state.getRecordingsDir().getFullPathName(), juce::dontSendNotification);
 }
 
 void SettingsPanel::store (const std::function<void (AppSettings&)>& change)
@@ -435,17 +415,6 @@ void SettingsPanel::chooseModelFile()
                           {
                               if (safe != nullptr && fc.getResult().existsAsFile())
                                   safe->store ([f = fc.getResult()] (AppSettings& s) { s.modelPath = f.getFullPathName(); });
-                          });
-}
-
-void SettingsPanel::chooseRecordingsFolder()
-{
-    chooser = std::make_unique<juce::FileChooser> (txt ("Ordner für Mitschnitte"), app.state.getRecordingsDir());
-    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
-                          [safe = juce::Component::SafePointer<SettingsPanel> (this)] (const juce::FileChooser& fc)
-                          {
-                              if (safe != nullptr && fc.getResult().isDirectory())
-                                  safe->store ([f = fc.getResult()] (AppSettings& s) { s.recordingsDir = f.getFullPathName(); });
                           });
 }
 
@@ -556,18 +525,6 @@ void SettingsPanel::Content::resized()
         auto r = row (32);
         o.testAlertButton.setBounds (r.removeFromRight (160));
         o.flashToggle.setBounds (r);
-    }
-    endSection();
-
-    beginSection ("Mitschnitt");
-    o.recordToggle.setBounds (row (26));
-    {
-        auto r = row (32);
-        o.openFolderButton.setBounds (r.removeFromRight (140));
-        r.removeFromRight (10);
-        o.chooseFolderButton.setBounds (r.removeFromRight (160));
-        r.removeFromRight (10);
-        o.folderLabel.setBounds (r);
     }
     endSection();
 

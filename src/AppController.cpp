@@ -40,13 +40,14 @@ AppController::AppController()
     engine.getDeviceManager().addChangeListener (this);
     state.addChangeListener (this);
     applyState();
+
+    // Von Anfang an zuhören: Es soll nichts verloren gehen, auch wenn niemand auf "Start" drückt.
+    setListening (true);
 }
 
 AppController::~AppController()
 {
-    stopSession();
-    stopTimer();
-    transcript.stopLog();
+    engine.setListening (false);
     state.removeChangeListener (this);
     engine.getDeviceManager().removeChangeListener (this);
     state.setAudioDeviceState (engine.createStateXml());
@@ -67,17 +68,6 @@ void AppController::changeListenerCallback (juce::ChangeBroadcaster* source)
     }
 
     applyState();
-}
-
-void AppController::timerCallback()
-{
-    // Spätestens nach 2 Minuten schließen, auch wenn noch etwas in der Warteschlange hängt
-    if ((transcriber.getQueueSize() == 0 && ! transcriber.isBusy()) || ++closeWaitTicks > 480)
-    {
-        stopTimer();
-        closeWaitTicks = 0;
-        transcript.stopLog();
-    }
 }
 
 juce::String AppController::buildPrompt() const
@@ -118,7 +108,6 @@ void AppController::applyState()
 
         AudioEngine::Assignment a;
         a.userId = u.id;
-        a.fileStem = u.name.isNotEmpty() ? u.name : "Person";
         a.channel = u.channel;
         a.thresholdDb = u.thresholdDb;
         assignments.push_back (a);
@@ -144,39 +133,15 @@ void AppController::applyState()
 }
 
 //==============================================================================
-bool AppController::startSession (juce::String& errorOut)
+void AppController::setListening (bool shouldListen)
 {
-    if (engine.isSessionRunning())
-        return true;
-
-    const auto folder = state.getRecordingsDir()
-                            .getChildFile (juce::Time::getCurrentTime().formatted ("%Y-%m-%d_%H-%M-%S"));
-
-    if (! engine.startSession (folder, state.getSettings().recordAudio, errorOut))
-        return false;
-
-    stopTimer();
-    lastSessionFolder = folder;
-    transcript.startLog (folder);   // schließt ggf. das Protokoll der vorigen Session
-
-    if (onSessionStateChanged)
-        onSessionStateChanged();
-
-    return true;
-}
-
-void AppController::stopSession()
-{
-    if (! engine.isSessionRunning())
+    if (shouldListen == engine.isListening())
         return;
 
-    engine.stopSession();
+    engine.setListening (shouldListen);
 
-    // Die letzten Abschnitte werden evtl. noch transkribiert: Protokoll erst danach schließen.
-    startTimer (250);
-
-    if (onSessionStateChanged)
-        onSessionStateChanged();
+    if (onListeningChanged)
+        onListeningChanged();
 }
 
 void AppController::injectTestMention()

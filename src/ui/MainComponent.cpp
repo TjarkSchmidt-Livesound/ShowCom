@@ -114,8 +114,8 @@ MainComponent::MainComponent (AppController& a) : app (a)
     setLookAndFeel (&lnf);
     juce::LookAndFeel::setDefaultLookAndFeel (&lnf);
 
-    sessionButton.onClick = [this] { toggleSession(); };
-    addAndMakeVisible (sessionButton);
+    listenButton.onClick = [this] { toggleListening(); };
+    addAndMakeVisible (listenButton);
 
     statusLabel.setFont (Theme::font (13.0f));
     statusLabel.setJustificationType (juce::Justification::centredRight);
@@ -156,7 +156,7 @@ MainComponent::MainComponent (AppController& a) : app (a)
 
     app.transcript.addListener (this);
     app.state.addChangeListener (this);
-    app.onSessionStateChanged = [this] { timerCallback(); };
+    app.onListeningChanged = [this] { timerCallback(); };
     app.onAudioDeviceChanged  = [this] { usersPanel.refreshChannels(); };
 
     timerCallback();
@@ -166,7 +166,7 @@ MainComponent::MainComponent (AppController& a) : app (a)
 
 MainComponent::~MainComponent()
 {
-    app.onSessionStateChanged = nullptr;
+    app.onListeningChanged = nullptr;
     app.onAudioDeviceChanged = nullptr;
     app.transcript.removeListener (this);
     app.state.removeChangeListener (this);
@@ -281,34 +281,28 @@ void MainComponent::changeListenerCallback (juce::ChangeBroadcaster*)
 }
 
 //==============================================================================
-void MainComponent::toggleSession()
+void MainComponent::toggleListening()
 {
-    if (! app.isSessionRunning())
+    if (! app.isListening())
     {
-        juce::String error;
-        if (! app.startSession (error))
-            juce::AlertWindow::showAsync (juce::MessageBoxOptions()
-                                              .withIconType (juce::MessageBoxIconType::WarningIcon)
-                                              .withTitle ("Session konnte nicht starten")
-                                              .withMessage (error)
-                                              .withButton ("OK"),
-                                          nullptr);
+        app.setListening (true);
         timerCallback();
         return;
     }
 
-    // Stoppen mitten in der Show soll kein Versehen sein
+    // Pausieren mitten in der Show soll kein Versehen sein
+    juce::Component::SafePointer<MainComponent> self (this);
     juce::AlertWindow::showAsync (juce::MessageBoxOptions()
                                       .withIconType (juce::MessageBoxIconType::QuestionIcon)
-                                      .withTitle ("Session beenden?")
-                                      .withMessage (txt ("Mitschnitt und Protokoll werden geschlossen."))
-                                      .withButton ("Beenden")
-                                      .withButton ("Weiterlaufen lassen"),
-                                  [safe = juce::Component::SafePointer<MainComponent> (this)] (int result)
+                                      .withTitle ("Zuhören pausieren?")
+                                      .withMessage (txt ("Solange pausiert ist, wird nichts transkribiert und es gibt keinen Namens-Alarm."))
+                                      .withButton ("Pausieren")
+                                      .withButton ("Weiter zuhören"),
+                                  [safe = self] (int result)
                                   {
                                       if (safe != nullptr && result == 1)
                                       {
-                                          safe->app.stopSession();
+                                          safe->app.setListening (false);
                                           safe->timerCallback();
                                       }
                                   });
@@ -316,20 +310,20 @@ void MainComponent::toggleSession()
 
 void MainComponent::timerCallback()
 {
-    const bool running = app.isSessionRunning();
-
-    if (running)
+    if (app.isListening())
     {
-        const auto secs = (int) app.engine.getSessionSeconds();
-        sessionButton.setButtonText (txt ("■  STOP   ") + juce::String::formatted ("%02d:%02d:%02d", secs / 3600, (secs / 60) % 60, secs % 60));
-        sessionButton.setColour (juce::TextButton::buttonColourId, Theme::record);
-        sessionButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+        const auto secs = (int) app.engine.getListeningSeconds();
+        listenButton.setButtonText (txt ("●  HÖRT ZU   ") + juce::String::formatted ("%02d:%02d:%02d", secs / 3600, (secs / 60) % 60, secs % 60));
+        listenButton.setColour (juce::TextButton::buttonColourId, Theme::ok.withAlpha (0.22f));
+        listenButton.setColour (juce::TextButton::textColourOffId, Theme::ok);
+        listenButton.setTooltip ("Klicken zum Pausieren");
     }
     else
     {
-        sessionButton.setButtonText (txt ("●  Session starten"));
-        sessionButton.setColour (juce::TextButton::buttonColourId, Theme::panelRaised);
-        sessionButton.setColour (juce::TextButton::textColourOffId, Theme::text);
+        listenButton.setButtonText (txt ("❚❚  PAUSIERT – fortsetzen"));
+        listenButton.setColour (juce::TextButton::buttonColourId, Theme::alert);
+        listenButton.setColour (juce::TextButton::textColourOffId, Theme::background);
+        listenButton.setTooltip ("Klicken, um wieder zuzuhören");
     }
 
     juce::String status = app.engine.getDeviceDescription();
@@ -404,7 +398,7 @@ void MainComponent::resized()
     headerArea = b.removeFromTop (64);
     auto h = headerArea.reduced (16, 12);
     h.removeFromLeft (120);
-    sessionButton.setBounds (h.removeFromLeft (240));
+    listenButton.setBounds (h.removeFromLeft (240));
     h.removeFromLeft (20);
 
     const int presenceWidth = juce::jmin (h.getWidth() / 2, (int) app.state.getUsers().size() * 44);

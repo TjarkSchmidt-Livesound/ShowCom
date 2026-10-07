@@ -81,7 +81,6 @@ private:
     void loadFromState();
     void store (const std::function<void (AppSettings&)>& change);
     void chooseModelFile();
-    void chooseRecordingsFolder();
     void startDownload();
 
     AppController& app;
@@ -118,11 +117,6 @@ private:
     juce::ToggleButton fuzzyToggle { txtInit ("Ähnliche Schreibweisen erkennen (1 Buchstabe Abweichung ab 5 Zeichen)") };
     juce::ToggleButton flashToggle { "Alarm-Banner blinkt" };
     juce::TextButton testAlertButton { "Alarm testen" };
-
-    // Aufnahme
-    juce::ToggleButton recordToggle { "Talkback als WAV mitschneiden (eine Datei pro Person, 24 Bit)" };
-    juce::Label folderLabel;
-    juce::TextButton chooseFolderButton { txtInit ("Ordner wählen …") }, openFolderButton { txtInit ("Ordner öffnen") };
 
     std::unique_ptr<juce::FileChooser> chooser;
     bool loading = false;

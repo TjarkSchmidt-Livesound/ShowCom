@@ -1,6 +1,6 @@
 # ShowCom
 
-**Talkback-Log für den Livesound-Betrieb** – Mitschnitt und Live-Transkription des Talkbacks, für Windows (ASIO) und macOS (CoreAudio).
+**Talkback-Log für den Livesound-Betrieb** – hört das Talkback mit und transkribiert es live, für Windows (ASIO) und macOS (CoreAudio, Apple-Chip und Intel).
 
 ![Board mit Personen-Kacheln, Akku- und HF-Anzeige](docs/board.png)
 
@@ -11,7 +11,7 @@
 - **Tabs**: *Konversation* (alle chronologisch), *Erwähnungen*, ein Tab pro Person, *Personen*, *Einstellungen*.
 - **Namens-Alarm**: Dein Name (plus Varianten) wird in jedem Transkript gesucht – ohne Groß/klein, mit Umlaut-Faltung und optional unscharf („Tjarck“ → „Tjark“). Bei einem Treffer blinkt oben ein großes Banner, der Beitrag wird markiert, ein Klick springt hin.
 - **Lokal & offline**: Spracherkennung mit [whisper.cpp](https://github.com/ggml-org/whisper.cpp), auf dem Mac per GPU (Metal). Kein Internet am Venue nötig, keine Daten in der Cloud.
-- **Mitschnitt**: Pro Person eine WAV-Datei (24 Bit mono) plus `transcript.txt` (wird live geschrieben) und `transcript.json` mit Zeitstempeln, die auf die Position in der WAV-Datei zeigen.
+- **Hört immer zu, speichert nichts**: ShowCom hört ab dem Programmstart mit (oben „HÖRT ZU“, per Klick pausierbar). Es werden keine Audiodateien und keine Protokolle geschrieben; das Audio wird nur im Arbeitsspeicher verarbeitet.
 - **Sicher am Pult**: Die Software öffnet das Interface nur mit Eingängen und gibt nie Audio aus.
 
 ## Aufbau
@@ -21,7 +21,7 @@ Audio-Interface (ASIO / CoreAudio)
    │  Audio-Callback (Echtzeit): kopiert nur in lock-freie FIFOs, misst Pegel
    ▼
 AudioEngine – Verarbeitungs-Thread
-   │  pro Person: Sprach-Gate (Pre-Roll 300 ms, Nachlauf 700 ms, max. 25 s) + WAV-Writer
+   │  pro Person: Sprach-Gate (Pre-Roll 300 ms, Nachlauf 700 ms, max. 25 s)
    ▼
 Transcriber – eigener Thread, whisper.cpp
    │  48 kHz → 16 kHz, Pegel anheben, Halluzinationen filtern, Namen als Prompt
@@ -31,13 +31,13 @@ TranscriptModel → Namenssuche (KeywordMatcher) → GUI (JUCE)
 
 | Datei | Aufgabe |
 |---|---|
-| `src/AudioEngine.*` | Gerät, Echtzeit-Callback, FIFOs, Pegel, Segmentierung, WAV-Mitschnitt |
+| `src/AudioEngine.*` | Gerät, Echtzeit-Callback, FIFOs, Pegel, Segmentierung |
 | `src/core/SpeechSegmenter.*` | Sprach-Gate (reines C++, getestet) |
 | `src/core/KeywordMatcher.*` | Namenssuche (reines C++, getestet) |
 | `src/Transcriber.*` | whisper.cpp-Anbindung, Resampling, Filter, Modell-Laden |
 | `src/TranscriptModel.*` | Einträge, Erwähnungen, Protokolldateien |
 | `src/AppState.*` | Benutzer, Avatare, Einstellungen (JSON) |
-| `src/AppController.*` | Verdrahtung, Sessions |
+| `src/AppController.*` | Verdrahtung, Zuhören an/aus |
 | `src/ui/*` | Oberfläche |
 
 | Konversation | Personen |
@@ -77,15 +77,15 @@ cmake --build build --config Release --parallel
 open "build/ShowCom_artefacts/Release/ShowCom.app"
 ```
 
-Metal (GPU) ist automatisch aktiv. Beim ersten Start fragt macOS nach dem Mikrofon-Zugriff – erlauben, sonst kommen nur Nullen an.
+Auf Macs mit Apple-Chip ist Metal (GPU) automatisch aktiv. Für Intel-Macs: `-DCMAKE_OSX_ARCHITECTURES=x86_64 -DGGML_METAL=OFF` ergänzen. Beim ersten Start fragt macOS nach dem Mikrofon-Zugriff – erlauben, sonst kommen nur Nullen an.
 
 ### Automatisch über GitHub
 
 Das Repository enthält `.github/workflows/build.yml`. Nach einem Push auf GitHub baut GitHub Actions automatisch:
 - **Windows** mit ASIO (das SDK wird mit Prüfsumme geladen),
-- **macOS** für Apple Silicon (ad-hoc signiert).
+- **macOS** je einmal für Apple-Chip (mit Metal-GPU) und für Intel-Macs (CPU mit AVX2), ad-hoc signiert.
 
-Die fertigen Programme liegen unter *Actions → letzter Lauf → Artifacts*: `ShowCom-Windows.exe` und `ShowCom-macOS.dmg`. Nach jedem erfolgreichen Build auf `main` stehen beide außerdem unter *Releases* zum Download (Version aus `CMakeLists.txt`). Da die Mac-App nicht notarisiert ist: beim ersten Öffnen Rechtsklick → *Öffnen*, oder `xattr -dr com.apple.quarantine "ShowCom.app"`.
+Die fertigen Programme liegen unter *Actions → letzter Lauf → Artifacts*: `ShowCom-Windows.exe`, `ShowCom-macOS-AppleSilicon.dmg` und `ShowCom-macOS-Intel.dmg`. Nach jedem erfolgreichen Build auf `main` stehen sie außerdem unter *Releases* zum Download (Version aus `CMakeLists.txt`). Da die Mac-App nicht notarisiert ist: beim ersten Öffnen Rechtsklick → *Öffnen*, oder `xattr -dr com.apple.quarantine "ShowCom.app"`.
 
 ### Tests
 
@@ -95,7 +95,7 @@ ctest --test-dir build -C Release --output-on-failure
 
 - `core`: Namenssuche (Umlaute, Mehrwort-Namen, Genitiv, unscharf) und Sprach-Gate.
 - `core` prüft außerdem den Shure-Parser mit Antworten von ULX-D, SLX-D und Axient Digital.
-- `engine`: Die komplette Audio-Engine mit einem simulierten 8-Kanal-Interface – automatische Kanal-Aktivierung, Schnitt, Zeitstempel, WAV-Inhalt – sowie die Netzwerk-Clients gegen einen simulierten Shure-ULX-D- und Sennheiser-EW-DX-Empfänger.
+- `engine`: Die komplette Audio-Engine mit einem simulierten 8-Kanal-Interface – automatische Kanal-Aktivierung, Schnitt, Zeitstempel, Signalinhalt, Pause – sowie die Netzwerk-Clients gegen einen simulierten Shure-ULX-D- und Sennheiser-EW-DX-Empfänger.
 
 ## Erste Schritte
 
@@ -103,7 +103,7 @@ ctest --test-dir build -C Release --output-on-failure
 2. **Einstellungen → Audio-Interface**: unter Windows Typ **ASIO** und dein Interface wählen, unter macOS das CoreAudio-Gerät.
 3. **Personen**: Für jede Person *+ Person*, Name, Funktion, Avatar, **Eingang** wählen. Die **Sprach-Schwelle** (gelber Strich) knapp über das Grundrauschen bzw. Bühnen-Übersprechen stellen – der Pegelbalken zeigt live, ob Sprache erkannt wird.
 4. **Einstellungen → Mein Name**: deinen Namen und Varianten eintragen, z. B. `Tjark, Tjarki, Monitor-Tjark`. Mit *Alarm testen* prüfen.
-5. Oben **Session starten**. Mitschnitte landen in `Dokumente/ShowCom/<Datum_Uhrzeit>/`.
+5. Fertig – ShowCom hört ab dem Start zu (oben **HÖRT ZU**). In der Umbaupause lässt es sich per Klick pausieren.
 
 Zum Ausprobieren ohne Interface und ohne Funk: Programm mit `--demo` starten. Das füllt die Anzeige mit Beispiel-Talkback und simuliert sechs Funkstrecken (wenn Personen angelegt sind).
 
@@ -137,12 +137,10 @@ Hinweis: Das neuere, verschlüsselte SSCv2 der EW-DX (HTTPS mit Passwort) ist no
 | Einstellungen, Personen | Windows: `%APPDATA%\ShowCom\settings.json` · macOS: `~/Library/Application Support/ShowCom/` |
 | Avatare (auf 256 × 256 px zugeschnitten) | `…/ShowCom/avatars/` |
 | Modelle | `…/ShowCom/models/` |
-| Mitschnitte | `Dokumente/ShowCom/` (änderbar) |
 
 ## Nächste Ausbaustufen
 
-- Beitrag anklicken → Ausschnitt aus der WAV vorhören (über ein separates Ausgabegerät, nie über das Pult)
-- Ältere Sessions laden und durchsuchen, Suche im Transkript
+- Suche im Transkript, optional Transkript als Text exportieren
 - Optionaler Ton oder Push-Benachrichtigung aufs Handy bei Erwähnung
 - Stimmerkennung (Diarisierung) für Summen-Talkback
 

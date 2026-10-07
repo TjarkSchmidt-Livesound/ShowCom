@@ -25,22 +25,6 @@ public:
 
     void systemRequestedQuit() override
     {
-        if (controller != nullptr && controller->isSessionRunning())
-        {
-            juce::AlertWindow::showAsync (juce::MessageBoxOptions()
-                                              .withIconType (juce::MessageBoxIconType::QuestionIcon)
-                                              .withTitle (juce::String::fromUTF8 ("Session läuft"))
-                                              .withMessage (juce::String::fromUTF8 ("Eine Session läuft noch. Mitschnitt beenden und Programm schließen?"))
-                                              .withButton ("Beenden")
-                                              .withButton ("Abbrechen"),
-                                          [] (int result)
-                                          {
-                                              if (result == 1)
-                                                  JUCEApplication::getInstance()->quit();
-                                          });
-            return;
-        }
-
         quit();
     }
 

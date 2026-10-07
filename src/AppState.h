@@ -37,10 +37,8 @@ struct AppSettings
     juce::String keywords;              // "Tjark, Tjarki"
     bool fuzzyKeywords = true;
     bool flashAlert = true;
-    bool recordAudio = true;
     bool useGpu = true;
     bool accurateDecoding = false;      // Beam-Search statt Greedy
-    juce::String recordingsDir;
     juce::String audioDeviceState;      // XML von AudioDeviceManager
     std::vector<WirelessDeviceConfig> wirelessDevices;
 };
@@ -58,7 +56,6 @@ public:
     static juce::File getAppDataDir();
     static juce::File getAvatarDir();
     static juce::File getModelsDir();
-    juce::File getRecordingsDir() const;
 
     void load();
     void save() const;

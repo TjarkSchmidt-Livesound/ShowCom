@@ -12,7 +12,7 @@ AudioEngine::AudioEngine()
 
 AudioEngine::~AudioEngine()
 {
-    stopSession();
+    setListening (false);
     deviceManager.removeAudioCallback (this);
     stopThread (3000);
     deviceManager.closeAudioDevice();
@@ -156,97 +156,53 @@ void AudioEngine::setAssignments (const std::vector<Assignment>& newAssignments)
 }
 
 //==============================================================================
-double AudioEngine::sessionSecondsNow() const
+double AudioEngine::listeningSecondsNow() const
 {
-    if (! sessionRunning.load())
+    if (! listening.load())
         return 0.0;
 
-    return (double) (juce::Time::currentTimeMillis() - sessionStartMs.load()) / 1000.0;
+    return (double) (juce::Time::currentTimeMillis() - listenStartMs.load()) / 1000.0;
 }
 
-double AudioEngine::getSessionSeconds() const
+double AudioEngine::getListeningSeconds() const
 {
-    return sessionSecondsNow();
+    return listeningSecondsNow();
 }
 
-bool AudioEngine::startSession (const juce::File& folder, bool shouldRecordAudio, juce::String& errorOut)
+void AudioEngine::setListening (bool shouldListen)
 {
-    if (sessionRunning.load())
-        return true;
-
-    if (! folder.createDirectory())
-    {
-        errorOut = "Ordner konnte nicht angelegt werden: " + folder.getFullPathName();
-        return false;
-    }
-
-    const juce::ScopedLock sl (processLock);
-
-    sessionFolder = folder;
-    recordAudio = shouldRecordAudio;
-    filePart = 1;
-    sessionStartTime = juce::Time::getCurrentTime();
-    sessionStartMs.store (sessionStartTime.toMilliseconds());
-    sessionRunning.store (true);
-
-    for (auto& [ch, state] : states)
-    {
-        state->segmenter.reset();
-        state->streamBaseSec = 0.0;
-        state->lastFlushSec = 0.0;
-
-        if (recordAudio)
-            openWriter (*state, filePart);
-    }
-
-    return true;
-}
-
-void AudioEngine::stopSession()
-{
-    if (! sessionRunning.load())
+    if (shouldListen == listening.load())
         return;
 
     const juce::ScopedLock sl (processLock);
 
-    for (auto& [ch, state] : states)
+    if (shouldListen)
     {
-        auto* st = state.get();
-        st->segmenter.flush ([this, st] (SpeechSegmenter::Segment&& s) { emitSegment (*st, std::move (s)); });
-        st->writer.reset();   // schließt die Datei und schreibt den WAV-Header
-    }
+        listenStartTime = juce::Time::getCurrentTime();
+        listenStartMs.store (listenStartTime.toMilliseconds());
 
-    sessionRunning.store (false);
+        for (auto& [ch, state] : states)
+        {
+            state->segmenter.reset();
+            state->streamBaseSec = 0.0;
+        }
+
+        listening.store (true);
+    }
+    else
+    {
+        // Laufende Abschnitte noch abschließen, damit nichts verloren geht
+        for (auto& [ch, state] : states)
+        {
+            auto* st = state.get();
+            st->segmenter.flush ([this, st] (SpeechSegmenter::Segment&& seg) { emitSegment (*st, std::move (seg)); });
+        }
+
+        listening.store (false);
+    }
 }
 
 //==============================================================================
-void AudioEngine::openWriter (ChannelState& state, int part)
-{
-    state.writer.reset();
-
-    if (preparedSampleRate <= 0.0)
-        return;
-
-    auto stem = juce::String::formatted ("%02d_", state.assignment.channel + 1)
-              + juce::File::createLegalFileName (state.assignment.fileStem);
-    if (part > 1)
-        stem << "_teil" << part;
-
-    const auto file = sessionFolder.getChildFile (stem + ".wav").getNonexistentSibling();
-
-    std::unique_ptr<juce::OutputStream> stream = file.createOutputStream();
-    if (stream == nullptr)
-        return;
-
-    juce::WavAudioFormat wav;
-    const auto options = juce::AudioFormatWriterOptions{}
-                             .withSampleRate (preparedSampleRate)
-                             .withNumChannels (1)
-                             .withBitsPerSample (24);
-
-    state.writer = wav.createWriterFor (stream, options);
-}
-
 void AudioEngine::prepareState (ChannelState& state, double baseSec)
 {
     SpeechSegmenter::Config cfg;
@@ -279,11 +235,7 @@ void AudioEngine::rebuildChannelStates()
 
         auto st = std::make_unique<ChannelState>();
         st->assignment = a;
-        prepareState (*st, sessionSecondsNow());
-
-        if (sessionRunning.load() && recordAudio)
-            openWriter (*st, filePart);
-
+        prepareState (*st, listeningSecondsNow());
         next[a.channel] = std::move (st);
     }
 
@@ -292,7 +244,6 @@ void AudioEngine::rebuildChannelStates()
     {
         auto* st = old.get();
         st->segmenter.flush ([this, st] (SpeechSegmenter::Segment&& s) { emitSegment (*st, std::move (s)); });
-        st->writer.reset();
     }
 
     states = std::move (next);
@@ -301,7 +252,7 @@ void AudioEngine::rebuildChannelStates()
 
 void AudioEngine::emitSegment (ChannelState& state, SpeechSegmenter::Segment&& seg)
 {
-    if (! sessionRunning.load() || ! onSegment || preparedSampleRate <= 0.0)
+    if (! listening.load() || ! onSegment || preparedSampleRate <= 0.0)
         return;
 
     Segment out;
@@ -309,7 +260,7 @@ void AudioEngine::emitSegment (ChannelState& state, SpeechSegmenter::Segment&& s
     out.channel = state.assignment.channel;
     out.sampleRate = preparedSampleRate;
     out.sessionOffsetSec = state.streamBaseSec + (double) seg.startSample / preparedSampleRate;
-    out.wallClock = sessionStartTime + juce::RelativeTime::seconds (out.sessionOffsetSec);
+    out.wallClock = listenStartTime + juce::RelativeTime::seconds (out.sessionOffsetSec);
     out.audio = std::move (seg.audio);
 
     onSegment (std::move (out));
@@ -329,32 +280,22 @@ void AudioEngine::run()
 
         if (sr > 0.0 && std::abs (sr - preparedSampleRate) > 0.5)
         {
-            // Samplerate geändert: laufende Abschnitte abschließen, neu vorbereiten,
-            // ggf. neue WAV-Datei beginnen (eine WAV kann nur eine Samplerate haben).
+            // Samplerate geändert: laufende Abschnitte abschließen und neu vorbereiten
             for (auto& [ch, state] : states)
             {
                 auto* st = state.get();
                 st->segmenter.flush ([this, st] (SpeechSegmenter::Segment&& s) { emitSegment (*st, std::move (s)); });
             }
 
-            const bool hadRate = preparedSampleRate > 0.0;
             preparedSampleRate = sr;
 
-            if (sessionRunning.load() && recordAudio && hadRate)
-                ++filePart;
-
             for (auto& [ch, state] : states)
-            {
-                prepareState (*state, sessionSecondsNow());
-                if (sessionRunning.load() && recordAudio)
-                    openWriter (*state, filePart);
-            }
+                prepareState (*state, listeningSecondsNow());
         }
 
         if (assignmentsDirty)
             rebuildChannelStates();
 
-        const double now = sessionSecondsNow();
         std::array<bool, maxChannels> seen {};
 
         for (int i = 0; i < numActive; ++i)
@@ -382,18 +323,6 @@ void AudioEngine::run()
 
                 st->segmenter.process (scratch.data(), num,
                                        [this, st] (SpeechSegmenter::Segment&& s) { emitSegment (*st, std::move (s)); });
-
-                if (st->writer != nullptr)
-                {
-                    const float* chans[] = { scratch.data() };
-                    st->writer->writeFromFloatArrays (chans, 1, num);
-                }
-            }
-
-            if (st != nullptr && st->writer != nullptr && now - st->lastFlushSec > 5.0)
-            {
-                st->writer->flush();   // Header aktualisieren: Datei bleibt bei Absturz lesbar
-                st->lastFlushSec = now;
             }
 
             speaking[(size_t) ch].store (st != nullptr && st->segmenter.isInSpeech());

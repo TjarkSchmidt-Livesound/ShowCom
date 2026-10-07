@@ -297,18 +297,15 @@ int main()
 
     AudioEngine::Assignment a;
     a.userId = "anna";
-    a.fileStem = "Anna";
     a.channel = talkChannel;
     a.thresholdDb = -40.0f;
     engine.setAssignments ({ a });
 
     check (engine.isChannelActive (talkChannel), "zugewiesener Eingang wurde automatisch aktiviert");
 
-    // Session starten, sobald das Gerät läuft (Zeitbasis der Bursts = Gerätestart; Toleranz unten)
-    const auto folder = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("tbs_engine_test");
-    folder.deleteRecursively();
-    juce::String err;
-    check (engine.startSession (folder, true, err), "Session startet");
+    // Zuhören einschalten, sobald das Gerät läuft (Zeitbasis der Bursts = Gerätestart; Toleranz unten)
+    engine.setListening (true);
+    check (engine.isListening(), "Zuhören ist aktiv");
 
     bool sawSpeaking = false;
     for (int i = 0; i < 65; ++i)   // 6.5 s
@@ -318,7 +315,7 @@ int main()
     }
 
     const float level = engine.getLevelDb (0);
-    engine.stopSession();
+    engine.setListening (false);
 
     check (sawSpeaking, "Sprech-Anzeige wurde aktiv");
     check (level > -20.0f, "Pegelanzeige für nicht zugewiesenen Eingang funktioniert");
@@ -345,29 +342,27 @@ int main()
         }
     }
 
-    auto wavs = folder.findChildFiles (juce::File::findFiles, false, "*.wav");
-    check (wavs.size() == 1, "eine WAV-Datei geschrieben");
-
-    if (wavs.size() == 1)
+    // Der Abschnitt muss das tatsächliche Signal enthalten (nicht Stille oder einen anderen Kanal)
     {
-        juce::WavAudioFormat wav;
-        std::unique_ptr<juce::AudioFormatReader> r (wav.createReaderFor (wavs[0].createInputStream().release(), true));
-        check (r != nullptr && r->numChannels == 1 && r->bitsPerSample == 24, "WAV ist mono, 24 Bit");
-        if (r != nullptr)
+        const juce::ScopedLock sl (segLock);
+        if (segments.size() == 2)
         {
-            const double secs = (double) r->lengthInSamples / r->sampleRate;
-            std::printf ("      %s: %.2f s\n", wavs[0].getFileName().toRawUTF8(), secs);
-            check (secs > 5.0 && secs < 7.5, "WAV-Länge entspricht der Session-Dauer");   // CI-Rechner laufen nicht exakt in Echtzeit
-
-            // Im WAV muss bei Abschnitt 2 tatsächlich Signal liegen
-            juce::AudioBuffer<float> b (1, 4800);
-            const double at = segments.size() == 2 ? segments[1].sessionOffsetSec + 0.5 : 4.0;
-            r->read (&b, 0, 4800, (juce::int64) (at * r->sampleRate), true, false);
-            check (b.getMagnitude (0, 0, 4800) > 0.2f, "Zeitstempel zeigt auf die richtige Stelle in der WAV");
+            float peak = 0.0f;
+            for (float v : segments[1].audio)
+                peak = juce::jmax (peak, std::abs (v));
+            check (peak > 0.2f && peak < 0.3f, "Abschnitt enthält das Sprachsignal von Eingang 3");
         }
     }
 
-    folder.deleteRecursively();
+    // Nach dem Pausieren dürfen keine Abschnitte mehr kommen
+    {
+        size_t before;
+        { const juce::ScopedLock sl (segLock); before = segments.size(); }
+        juce::Thread::sleep (1500);
+        const juce::ScopedLock sl (segLock);
+        check (segments.size() == before, "pausiert: keine weiteren Abschnitte");
+    }
+
     std::printf (failures == 0 ? "Engine test passed.\n" : "Engine test FAILED.\n");
     return failures == 0 ? 0 : 1;
 }

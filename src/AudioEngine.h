@@ -1,7 +1,6 @@
 #pragma once
 
 #include <juce_audio_devices/juce_audio_devices.h>
-#include <juce_audio_formats/juce_audio_formats.h>
 
 #include "SpeechSegmenter.h"
 
@@ -18,8 +17,8 @@
 
     Verarbeitungs-Thread (alle ~10 ms):
         liest die FIFOs, berechnet Pegelanzeigen, schneidet pro zugewiesenem Kanal
-        Sprach-Abschnitte (SpeechSegmenter) und schreibt während einer Session pro Person
-        eine WAV-Datei. Fertige Abschnitte gehen über onSegment an die Transkription.
+        Sprach-Abschnitte (SpeechSegmenter). Fertige Abschnitte gehen über onSegment an die
+        Transkription. Es wird nichts auf die Platte geschrieben.
 */
 class AudioEngine : private juce::AudioIODeviceCallback,
                     private juce::Thread
@@ -30,7 +29,6 @@ public:
     struct Assignment
     {
         juce::String userId;
-        juce::String fileStem;     // für WAV-Dateinamen
         int channel = -1;
         float thresholdDb = -45.0f;
     };
@@ -41,7 +39,7 @@ public:
         int channel = -1;
         std::vector<float> audio;
         double sampleRate = 48000.0;
-        double sessionOffsetSec = 0.0;   // Start relativ zum Session-Beginn (= Position in der WAV)
+        double sessionOffsetSec = 0.0;   // Start relativ zum Beginn des Zuhörens
         juce::Time wallClock;
     };
 
@@ -60,12 +58,10 @@ public:
     /** Message-Thread. Aktiviert zugewiesene Eingänge automatisch am Interface. */
     void setAssignments (const std::vector<Assignment>& newAssignments);
 
-    // --- Session --------------------------------------------------------------
-    bool startSession (const juce::File& folder, bool recordAudio, juce::String& errorOut);
-    void stopSession();
-    bool isSessionRunning() const                           { return sessionRunning.load(); }
-    double getSessionSeconds() const;
-    juce::File getSessionFolder() const                     { return sessionFolder; }
+    // --- Zuhören (Abschnitte an die Transkription weitergeben) ------------------
+    void setListening (bool shouldListen);
+    bool isListening() const                                { return listening.load(); }
+    double getListeningSeconds() const;
 
     // --- Status für die GUI (beliebiger Thread) -------------------------------
     float getLevelDb (int channel) const;
@@ -98,16 +94,13 @@ private:
     {
         Assignment assignment;
         SpeechSegmenter segmenter;
-        std::unique_ptr<juce::AudioFormatWriter> writer;
-        double streamBaseSec = 0.0;   // Session-Zeit, zu der dieser Segmenter gestartet ist
-        double lastFlushSec = 0.0;
+        double streamBaseSec = 0.0;   // Zeit seit Beginn des Zuhörens, zu der dieser Segmenter gestartet ist
     };
 
     void rebuildChannelStates();                       // processLock gehalten
     void prepareState (ChannelState&, double baseSec); // processLock gehalten
-    void openWriter (ChannelState&, int part);         // processLock gehalten
     void emitSegment (ChannelState&, SpeechSegmenter::Segment&&);
-    double sessionSecondsNow() const;
+    double listeningSecondsNow() const;
 
     juce::AudioDeviceManager deviceManager;
 
@@ -129,15 +122,12 @@ private:
     bool assignmentsDirty = false;
     std::map<int, std::unique_ptr<ChannelState>> states;
     double preparedSampleRate = 0.0;
-    int filePart = 1;
     std::vector<float> scratch;
     std::array<float, maxChannels> smoothedLevel {};
 
-    std::atomic<bool> sessionRunning { false };
-    bool recordAudio = true;
-    juce::File sessionFolder;
-    juce::Time sessionStartTime;
-    std::atomic<juce::int64> sessionStartMs { 0 };
+    std::atomic<bool> listening { false };
+    juce::Time listenStartTime;
+    std::atomic<juce::int64> listenStartMs { 0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AudioEngine)
 };

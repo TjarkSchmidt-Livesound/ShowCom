@@ -19,7 +19,7 @@ struct TranscriptEntry
 };
 
 /**
-    Alle Einträge der laufenden Anzeige + Protokoll auf Platte.
+    Alle Einträge der laufenden Anzeige (nur im Arbeitsspeicher, keine Dateien).
     Nur Message-Thread.
 */
 class TranscriptModel
@@ -38,28 +38,18 @@ public:
     const std::vector<TranscriptEntry>& getEntries() const { return entries; }
     const TranscriptEntry* findEntry (juce::int64 id) const;
 
-    /** Fügt hinzu, sucht Erwähnungen, schreibt ins Protokoll. */
+    /** Fügt hinzu und sucht Erwähnungen. */
     const TranscriptEntry& add (TranscriptEntry e);
     void clear();
 
     void setKeywords (const juce::String& keywords, bool fuzzy);
 
-    /** Ab jetzt jeden Eintrag zusätzlich in transcript.txt im Ordner anhängen. */
-    void startLog (const juce::File& folder);
-    /** Schreibt transcript.json und transcript.txt vollständig und beendet das Protokoll. */
-    void stopLog();
-
     static juce::String formatLine (const TranscriptEntry& e);
 
 private:
-    void writeJson() const;
-
     std::vector<TranscriptEntry> entries;
     juce::ListenerList<Listener> listeners;
     KeywordMatcher matcher;
     juce::int64 nextId = 1;
 
-    juce::File logFolder;
-    std::unique_ptr<juce::FileOutputStream> logStream;
-    size_t firstEntryOfSession = 0;
 };

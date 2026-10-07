@@ -72,15 +72,26 @@ jobs:
           }
 
   macos:
-    name: macOS (Apple Silicon, Metal)
+    name: macOS (${{ matrix.label }})
     runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            label: AppleSilicon
+            flags: ""
+          # Intel-Macs: Cross-Build auf dem Apple-Silicon-Runner, CPU mit AVX2, ohne Metal
+          - arch: x86_64
+            label: Intel
+            flags: "-DGGML_METAL=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON"
     steps:
       - uses: actions/checkout@v4
 
       - name: Konfigurieren
         run: |
           set -o pipefail
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=arm64 -DGGML_NATIVE=OFF 2>&1 | tee configure.log
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} -DGGML_NATIVE=OFF ${{ matrix.flags }} 2>&1 | tee configure.log
 
       - name: Bauen
         run: |
@@ -95,6 +106,9 @@ jobs:
           done
           true
 
+      - name: Architektur prüfen
+        run: lipo -info "build/ShowCom_artefacts/Release/ShowCom.app/Contents/MacOS/ShowCom"
+
       - name: Ad-hoc signieren und DMG erstellen
         run: |
           APP="build/ShowCom_artefacts/Release/ShowCom.app"
@@ -102,12 +116,12 @@ jobs:
           mkdir dmg
           cp -R "$APP" dmg/
           ln -s /Applications dmg/Applications
-          hdiutil create -volname "ShowCom" -srcfolder dmg -ov -format UDZO ShowCom-macOS.dmg
+          hdiutil create -volname "ShowCom" -srcfolder dmg -ov -format UDZO ShowCom-macOS-${{ matrix.label }}.dmg
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ShowCom-macOS
-          path: ShowCom-macOS.dmg
+          name: ShowCom-macOS-${{ matrix.label }}
+          path: ShowCom-macOS-${{ matrix.label }}.dmg
 
       - name: Tests
         continue-on-error: true
@@ -148,9 +162,13 @@ jobs:
           target_commitish: ${{ github.sha }}
           body: |
             **Windows:** `ShowCom-Windows.exe` herunterladen und starten. SmartScreen-Warnung: „Weitere Informationen → Trotzdem ausführen“.
-            **macOS (Apple Silicon):** `ShowCom-macOS.dmg` öffnen, ShowCom in „Programme“ ziehen. Beim ersten Start Rechtsklick → „Öffnen“.
+            **macOS mit Apple-Chip (M1 und neuer):** `ShowCom-macOS-AppleSilicon.dmg`
+            **macOS mit Intel-Prozessor:** `ShowCom-macOS-Intel.dmg`
+            DMG öffnen, ShowCom in „Programme“ ziehen. Beim ersten Start Rechtsklick → „Öffnen“.
+            (Welcher Mac? Apple-Menü → „Über diesen Mac“ → „Chip“ = Apple, „Prozessor“ = Intel.)
 
             Danach in ShowCom unter *Einstellungen* ein Spracherkennungs-Modell herunterladen.
           files: |
             dist/ShowCom-Windows.exe
-            dist/ShowCom-macOS.dmg
+            dist/ShowCom-macOS-AppleSilicon.dmg
+            dist/ShowCom-macOS-Intel.dmg
