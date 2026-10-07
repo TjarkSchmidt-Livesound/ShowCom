@@ -1,6 +1,12 @@
 #include "AppState.h"
+#include "BoardLayout.h"
+#include "Cutout.h"
 
 #include <iterator>
+
+#if JUCE_MAC
+bool showcomVisionPersonMask (const juce::Image& image, juce::Image& maskOut);   // CutoutMac.mm
+#endif
 
 namespace
 {
@@ -70,6 +76,8 @@ void AppState::load()
             settings.webEnabled       = flag ("webEnabled", true);
             settings.webPort          = s->hasProperty ("webPort") ? juce::jlimit (1024, 65535, (int) s->getProperty ("webPort")) : 8080;
             settings.liveText         = flag ("liveText", true);
+            settings.boardOrder       = BoardLayout::sanitise (s->getProperty ("boardOrder"));
+            settings.boardHidden      = BoardLayout::sanitise (s->getProperty ("boardHidden"));
         }
 
         settings.wirelessDevices.clear();
@@ -108,6 +116,7 @@ void AppState::load()
                 u.talkbackLog = v.hasProperty ("talkback") ? (bool) v["talkback"] : true;
                 u.rfDeviceId  = v["rfDevice"].toString();
                 u.rfChannel   = v.hasProperty ("rfChannel") ? (int) v["rfChannel"] : 0;
+                u.cutout      = v.hasProperty ("cutout") ? (bool) v["cutout"] : true;
                 u.colour      = v.hasProperty ("colour") ? juce::Colour::fromString (v["colour"].toString())
                                                          : paletteColour ((int) users.size());
 
@@ -120,6 +129,7 @@ void AppState::load()
     }
 
     avatarCache.clear();
+    cutoutCache.clear();
     sendChangeMessage();
 }
 
@@ -138,6 +148,8 @@ void AppState::save() const
     s->setProperty ("webEnabled",       settings.webEnabled);
     s->setProperty ("webPort",          settings.webPort);
     s->setProperty ("liveText",         settings.liveText);
+    s->setProperty ("boardOrder",       settings.boardOrder);
+    s->setProperty ("boardHidden",      settings.boardHidden);
 
     juce::Array<juce::var> arr;
 
@@ -154,6 +166,7 @@ void AppState::save() const
         o->setProperty ("talkback",    u.talkbackLog);
         o->setProperty ("rfDevice",    u.rfDeviceId);
         o->setProperty ("rfChannel",   u.rfChannel);
+        o->setProperty ("cutout",      u.cutout);
         arr.add (juce::var (o));
     }
 
@@ -255,9 +268,13 @@ void AppState::removeUser (const juce::String& id)
         if (it->id == id)
         {
             if (it->avatarFile.isNotEmpty())
+            {
                 getAvatarDir().getChildFile (it->avatarFile).deleteFile();
+                cutoutFileFor (*it).deleteFile();
+            }
 
             avatarCache.erase (id);
+            cutoutCache.erase (id);
             users.erase (it);
             changed();
             return;
@@ -283,6 +300,124 @@ void AppState::moveUser (const juce::String& id, int delta)
 }
 
 //==============================================================================
+std::vector<const UserProfile*> AppState::getBoardUsers (bool includeHidden) const
+{
+    juce::StringArray ids;
+    for (auto& u : users)
+        ids.add (u.id);
+
+    std::vector<const UserProfile*> out;
+    for (int i : BoardLayout::order (ids, settings.boardOrder))
+        if (includeHidden || ! settings.boardHidden.contains (users[(size_t) i].id))
+            out.push_back (&users[(size_t) i]);
+
+    return out;
+}
+
+void AppState::setBoardLayout (const juce::StringArray& order, const juce::StringArray& hidden)
+{
+    if (order == settings.boardOrder && hidden == settings.boardHidden)
+        return;
+
+    settings.boardOrder = order;
+    settings.boardHidden = hidden;
+    save();
+    boardLayoutChanged.sendChangeMessage();
+}
+
+//==============================================================================
+juce::Image AppState::makeCutout (const juce::Image& square)
+{
+    if (! square.isValid())
+        return {};
+
+    const int w = square.getWidth(), h = square.getHeight();
+    const juce::Image::BitmapData src (square, juce::Image::BitmapData::readOnly);
+
+    juce::Image out (juce::Image::ARGB, w, h, true);
+
+   #if JUCE_MAC
+    // macOS 12+: Personen-Segmentierung von Apple (Vision), sehr gute Kanten auch bei Haaren
+    {
+        juce::Image mask;
+        if (showcomVisionPersonMask (square, mask) && mask.getWidth() == w && mask.getHeight() == h)
+        {
+            const juce::Image::BitmapData m (mask, juce::Image::BitmapData::readOnly);
+            juce::Image::BitmapData dst (out, juce::Image::BitmapData::writeOnly);
+            int covered = 0;
+            for (int y = 0; y < h; ++y)
+                for (int x = 0; x < w; ++x)
+                {
+                    const auto a = m.getPixelColour (x, y).getAlpha();
+                    covered += a > 128 ? 1 : 0;
+                    dst.setPixelColour (x, y, src.getPixelColour (x, y).withAlpha (a));
+                }
+
+            if (covered > (w * h) / 25)   // Person gefunden
+                return out;
+        }
+    }
+   #endif
+
+    // Eigenes Verfahren (alle Plattformen)
+    std::vector<uint8_t> rgba ((size_t) (w * h * 4));
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x)
+        {
+            const auto c = src.getPixelColour (x, y);
+            auto* p = &rgba[(size_t) ((y * w + x) * 4)];
+            p[0] = c.getRed(); p[1] = c.getGreen(); p[2] = c.getBlue(); p[3] = c.getAlpha();
+        }
+
+    const auto res = Cutout::removeBackground (rgba.data(), w, h);
+    if (! res.ok)
+        return {};
+
+    if (res.alreadyTransparent)
+        return square;
+
+    juce::Image::BitmapData dst (out, juce::Image::BitmapData::writeOnly);
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x)
+            dst.setPixelColour (x, y, src.getPixelColour (x, y).withAlpha (res.alpha[(size_t) (y * w + x)]));
+
+    return out;
+}
+
+juce::File AppState::cutoutFileFor (const UserProfile& u) const
+{
+    if (u.avatarFile.isEmpty())
+        return {};
+    return getAvatarDir().getChildFile (juce::File::createFileWithoutCheckingPath (u.avatarFile).getFileNameWithoutExtension() + "_cut.png");
+}
+
+juce::Image AppState::getCutoutImage (const UserProfile& u) const
+{
+    if (auto it = cutoutCache.find (u.id); it != cutoutCache.end())
+        return it->second;
+
+    juce::Image cut;
+    const auto file = cutoutFileFor (u);
+
+    if (file.existsAsFile())
+        cut = juce::ImageFileFormat::loadFrom (file);
+
+    if (! cut.isValid())
+    {
+        // Ältere Profilbilder: einmal freistellen und ablegen
+        cut = makeCutout (getAvatarOriginal (u.id));
+        if (cut.isValid() && file != juce::File())
+        {
+            juce::FileOutputStream out (file);
+            if (out.openedOk())
+                juce::PNGImageFormat().writeImageToStream (cut, out);
+        }
+    }
+
+    cutoutCache[u.id] = cut;
+    return cut;
+}
+
 bool AppState::setAvatarFromFile (const juce::String& userId, const juce::File& imageFile)
 {
     auto* existing = findUser (userId);
@@ -314,10 +449,15 @@ bool AppState::setAvatarFromFile (const juce::String& userId, const juce::File& 
 
     auto user = *existing;
     if (user.avatarFile.isNotEmpty())
+    {
         getAvatarDir().getChildFile (user.avatarFile).deleteFile();
+        cutoutFileFor (user).deleteFile();
+    }
 
     user.avatarFile = fileName;
     avatarCache[userId] = scaled;
+    cutoutCache.erase (userId);
+    getCutoutImage (user);   // gleich freistellen, nicht erst beim ersten Zeichnen
     updateUser (user);
     return true;
 }
@@ -328,15 +468,19 @@ void AppState::clearAvatar (const juce::String& userId)
     {
         auto user = *existing;
         if (user.avatarFile.isNotEmpty())
+        {
             getAvatarDir().getChildFile (user.avatarFile).deleteFile();
+            cutoutFileFor (user).deleteFile();
+        }
 
         user.avatarFile = {};
         avatarCache.erase (userId);
+        cutoutCache.erase (userId);
         updateUser (user);
     }
 }
 
-juce::Image AppState::getAvatar (const juce::String& userId) const
+juce::Image AppState::getAvatarOriginal (const juce::String& userId) const
 {
     if (auto it = avatarCache.find (userId); it != avatarCache.end())
         return it->second;
@@ -348,6 +492,25 @@ juce::Image AppState::getAvatar (const juce::String& userId) const
 
     avatarCache[userId] = img;   // auch "kein Bild" cachen
     return img;
+}
+
+AppState::CutoutState AppState::getCutoutState (const juce::String& userId) const
+{
+    auto* u = findUser (userId);
+    if (u == nullptr || ! getAvatarOriginal (userId).isValid())
+        return CutoutState::noImage;
+    if (! u->cutout)
+        return CutoutState::off;
+    return getCutoutImage (*u).isValid() ? CutoutState::cut : CutoutState::notPossible;
+}
+
+juce::Image AppState::getAvatar (const juce::String& userId) const
+{
+    if (auto* u = findUser (userId); u != nullptr && u->cutout)
+        if (auto cut = getCutoutImage (*u); cut.isValid())
+            return cut;
+
+    return getAvatarOriginal (userId);
 }
 
 //==============================================================================

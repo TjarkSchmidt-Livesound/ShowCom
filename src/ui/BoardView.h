@@ -9,6 +9,8 @@
     Board: eine hohe Kachel pro Person, wie ein RF-Board.
     Foto mit Farbverlauf, Akku oben rechts, letzte Ansage, Verlauf von HF-Signal
     und Talkback-Pegel, darunter Frequenz, Laufzeit und Pegel.
+
+    "Anpassen": Kacheln per Ziehen umsortieren und einzeln ein-/ausblenden.
 */
 class BoardView : public juce::Component,
                   private juce::Timer,
@@ -33,10 +35,28 @@ private:
     public:
         explicit Content (BoardView& o) : owner (o) { setMouseCursor (juce::MouseCursor::PointingHandCursor); }
         void paint (juce::Graphics&) override;
+        void mouseDown (const juce::MouseEvent&) override;
+        void mouseDrag (const juce::MouseEvent&) override;
         void mouseUp (const juce::MouseEvent&) override;
+        void mouseMove (const juce::MouseEvent&) override;
     private:
         BoardView& owner;
     };
+
+    // Werkzeuge auf einer Kachel im Anpassen-Modus
+    enum class Tool { none, left, eye, right };
+    struct ToolRects { juce::Rectangle<float> left, eye, right; };
+    static ToolRects toolRectsFor (juce::Rectangle<float> card);
+    Tool toolAt (int cardIndex, juce::Point<float>) const;
+    int cardAt (juce::Point<float>) const;
+
+    void setEditing (bool);
+    void moveCard (int from, int to);
+    void toggleHidden (const juce::String& userId);
+    void commitLayout();
+    void paintEditOverlay (juce::Graphics&, juce::Rectangle<float>, const UserProfile&, int index, int count);
+
+    juce::Image getPhotoLayer (const UserProfile&, const juce::Image&, bool cutout, float side, float pixelScale);
 
     void timerCallback() override;
     void transcriptEntryAdded (const TranscriptEntry&) override;
@@ -52,7 +72,19 @@ private:
     AppController& app;
     juce::Viewport viewport;
     Content content { *this };
+    juce::TextButton editButton;
     std::vector<juce::Rectangle<float>> cardRects;
+    juce::StringArray cardIds;          // Personen in Anzeigereihenfolge (im Anpassen-Modus inkl. ausgeblendeter)
+
+    bool editing = false;
+    struct Drag { int index = -1; bool active = false; float grabX = 0, mouseX = 0; int drop = -1; } drag;
+    Tool hoverTool = Tool::none;
+    int hoverCard = -1;
+
+    struct PhotoLayer { juce::String key; juce::Image image; };
+    std::map<juce::String, PhotoLayer> photoCache;
+
+    static constexpr int toolbarH = 38;
 
     struct Last { juce::String text; juce::Time time; bool mention = false; };
     std::map<juce::String, std::deque<Last>> recent;   // letzte Ansagen pro Person

@@ -61,6 +61,8 @@ private:
 
     AvatarPicker avatar { app };
     juce::TextButton removeAvatarButton { "Bild entfernen" };
+    juce::ToggleButton cutoutToggle;
+    juce::Rectangle<int> cutoutStatusArea;
     juce::Label nameLabel { {}, "Name" }, roleLabel { {}, "Funktion" }, channelLabel { {}, "Eingang" },
                 thresholdLabel { {}, "Sprach-Schwelle" }, colourLabel { {}, "Farbe" };
     juce::TextEditor nameEditor, roleEditor;

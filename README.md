@@ -6,7 +6,9 @@
 
 - **Board im RF-Board-Stil**: Pro Person eine hohe Kachel mit Foto, Lichtstrahlen in ihrer Farbe, Akku oben rechts, letzter Ansage, Verlauf von HF-Signal und Talkback-Pegel sowie Frequenz, Restlaufzeit und dBm. Warnungen wie *Akku kritisch*, *Akku niedrig*, *Schwaches Signal* oder *Sender aus* erscheinen direkt auf der Kachel.
 - **Talkback mitloggen – pro Person wählbar**: Talkback-Personen bekommen eine Kachel mit Foto im oberen Drittel und darunter ihren letzten Ansagen; fällt dein Name, leuchtet dieses Feld, bis du den Alarm quittierst. Personen ohne Talkback (Redner, Bandmitglieder) werden nur funküberwacht und erscheinen als große Foto-Kachel mit Akku und HF-Verlauf.
-- **Browser-Zugriff**: Eingebauter Webserver (Port 8080). Jedes Handy/Tablet/Laptop bekommt automatisch eine eigene Geräte-ID mit eigener Oberfläche und eigenem Alarm-Namen (inkl. Ton und Vibration). Im Browser lassen sich Personen nur ein- und ausblenden – anlegen, löschen und Geräte entfernen geht nur am Host.
+- **Freigestellte Profilbilder**: Wie auf dem RF-Board steht die Person ohne Hintergrund vor den Lichtstrahlen ihrer Farbe – bei Nur-Funk-Kacheln groß, mit leichtem Schein. Der Hintergrund wird beim Import automatisch entfernt (auf dem Mac ab macOS 12 mit Apples Personen-Erkennung, sonst mit einem eigenen Verfahren, das bei ruhigem Hintergrund gut funktioniert). PNGs mit Transparenz werden direkt übernommen. Pro Person abschaltbar.
+- **Dashboard anpassen – für jeden**: Am Rechner und auf jedem Browser-Gerät lässt sich einzeln festlegen, wer auf dem Board erscheint und in welcher Reihenfolge (Kacheln ziehen oder mit ◀ ▶ verschieben, Auge = ein/aus).
+- **Browser-Zugriff**: Eingebauter Webserver (Port 8080). Jedes Handy/Tablet/Laptop bekommt automatisch eine eigene Geräte-ID mit eigener Oberfläche, eigenem Dashboard-Layout und eigenem Alarm-Namen (inkl. Ton und Vibration). Personen anlegen, löschen und Geräte entfernen geht nur am Host.
 - **Funkempfänger im Netzwerk**: Shure ULX-D, QLX-D, SLX-D und Axient Digital (TCP 2202) sowie Sennheiser EW-DX EM 2/EM 4 (SSCv1, UDP 45). Jeder Person wird ihr Funkkanal zugewiesen.
 - **Eine Person pro Eingang**: Jedes Talkback-Mikro liegt auf einem eigenen Kanal des Audio-Interfaces. Dadurch ist immer eindeutig, wer gesprochen hat – ohne fehleranfällige Stimmerkennung.
 - **Benutzer mit Avataren**: Name, Funktion (FOH, Monitor, Licht …), Farbe, Profilbild (Klick oder Drag & Drop), Eingang und Sprach-Schwelle mit Live-Pegel.
@@ -42,7 +44,8 @@ TranscriptModel → Namenssuche (KeywordMatcher) → GUI (JUCE)
 | `src/core/KeywordMatcher.*` | Namenssuche (reines C++, getestet) |
 | `src/Transcriber.*` | whisper.cpp-Anbindung, Resampling, Filter, Modell-Laden |
 | `src/TranscriptModel.*` | Einträge, Erwähnungen, Protokolldateien |
-| `src/AppState.*` | Benutzer, Avatare, Einstellungen (JSON) |
+| `src/AppState.*` | Benutzer, Avatare, Dashboard-Layout, Einstellungen (JSON) |
+| `src/core/Cutout.*` | Profilbilder freistellen (reines C++, getestet); `src/CutoutMac.mm` nutzt auf dem Mac Apple Vision |
 | `src/AppController.*` | Verdrahtung, Zuhören an/aus |
 | `src/ui/*` | Oberfläche |
 
@@ -107,9 +110,10 @@ ctest --test-dir build -C Release --output-on-failure
 
 1. **Einstellungen → Spracherkennung**: Modell `large-v3-turbo q5` (574 MB, genaueste Erkennung) *Herunterladen*, Sprache Deutsch, Erkennung **Genau**. Unter *Eigene Begriffe* Bandname, Songtitel und Fachwörter eintragen – Whisper schreibt sie dann richtig.
 2. **Einstellungen → Audio-Interface**: unter Windows Typ **ASIO** und dein Interface wählen, unter macOS das CoreAudio-Gerät.
-3. **Personen**: Für jede Person *+ Person*, Name, Funktion, Avatar. **Talkback dieser Person mitloggen** an → **Eingang** wählen; aus → reine Funküberwachung (Redner, Band). Die **Sprach-Schwelle** (gelber Strich) knapp über das Grundrauschen bzw. Bühnen-Übersprechen stellen – der Pegelbalken zeigt live, ob Sprache erkannt wird.
+3. **Personen**: Für jede Person *+ Person*, Name, Funktion, Profilbild (*Hintergrund ausblenden* ist voreingestellt; am besten ein Foto vor ruhigem Hintergrund oder ein freigestelltes PNG). **Talkback dieser Person mitloggen** an → **Eingang** wählen; aus → reine Funküberwachung (Redner, Band). Die **Sprach-Schwelle** (gelber Strich) knapp über das Grundrauschen bzw. Bühnen-Übersprechen stellen – der Pegelbalken zeigt live, ob Sprache erkannt wird.
 4. **Einstellungen → Mein Name**: deinen Namen und Varianten eintragen, z. B. `Tjark, Tjarki, Monitor-Tjark`. Mit *Alarm testen* prüfen.
-5. Fertig – ShowCom hört ab dem Start zu (oben **HÖRT ZU**). In der Umbaupause lässt es sich per Klick pausieren.
+5. **Board → Dashboard anpassen**: Reihenfolge und Auswahl der Kacheln festlegen.
+6. Fertig – ShowCom hört ab dem Start zu (oben **HÖRT ZU**). In der Umbaupause lässt es sich per Klick pausieren.
 
 Zum Ausprobieren ohne Interface und ohne Funk: Programm mit `--demo` starten. Das füllt die Anzeige mit Beispiel-Talkback und simuliert sechs Funkstrecken (wenn Personen angelegt sind).
 
@@ -119,7 +123,7 @@ Unter **Einstellungen → Webzugriff** stehen die Adressen, z. B. `http://192.16
 
 1. Beim ersten Aufruf bekommt das Gerät eine eigene ID (z. B. `/d/7F5W7T`) und behält sie (im Browser gespeichert).
 2. Oben **Mein Name** eintragen – fällt dieser Name, alarmiert genau dieses Gerät (Banner, leuchtendes Feld, mit **Ton an** auch akustisch und per Vibration).
-3. Über **Personen** einblenden, wen dieses Gerät sehen soll.
+3. Über **Dashboard anpassen** festlegen, wen dieses Gerät sieht und in welcher Reihenfolge: Kacheln ziehen (am Handy am runden Griff), mit ◀ ▶ verschieben, mit dem Auge ein- und ausblenden. Das Layout wird am Host pro Gerät gespeichert.
 
 Am Host sind alle Geräte unter *Webzugriff* aufgelistet (Name, Alarm-Name, zuletzt gesehen) und lassen sich dort entfernen. macOS fragt beim ersten Start, ob ShowCom eingehende Verbindungen annehmen darf – erlauben.
 
@@ -127,7 +131,9 @@ Hinweis: Der Webzugriff hat kein Passwort. Nur in vertrauenswürdigen Netzen (Pr
 
 | Browser (Desktop) | Browser (Handy) |
 |---|---|
-| ![Web-Oberfläche mit Alarm](docs/web.png) | ![Web-Oberfläche auf dem Handy](docs/web_mobil.png) |
+| ![Web-Oberfläche](docs/web.png) | ![Web-Oberfläche auf dem Handy](docs/web_mobil.png) |
+
+![Dashboard anpassen im Browser](docs/web_anpassen.png)
 
 ## Funkempfänger anbinden
 
@@ -157,7 +163,7 @@ Hinweis: Das neuere, verschlüsselte SSCv2 der EW-DX (HTTPS mit Passwort) ist no
 | Was | Wo |
 |---|---|
 | Einstellungen, Personen | Windows: `%APPDATA%\ShowCom\settings.json` · macOS: `~/Library/Application Support/ShowCom/` |
-| Avatare (auf 256 × 256 px zugeschnitten) | `…/ShowCom/avatars/` |
+| Profilbilder (512 × 512 px, dazu die freigestellte Fassung `…_cut.png`) | `…/ShowCom/avatars/` |
 | Modelle | `…/ShowCom/models/` |
 
 ## Nächste Ausbaustufen

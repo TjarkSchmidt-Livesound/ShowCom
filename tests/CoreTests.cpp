@@ -3,6 +3,7 @@
 #include "KeywordMatcher.h"
 #include "SpeechSegmenter.h"
 #include "ShureParser.h"
+#include "Cutout.h"
 
 #include <cmath>
 #include <cstdio>
@@ -192,12 +193,69 @@ static void testShure()
     }
 }
 
+static void testCutout()
+{
+    // Synthetisches Porträt: Wand mit Verlauf + Rauschen, Kopf (Kreis) und Oberkörper bis zum unteren Rand
+    const int w = 160, h = 160;
+    std::vector<uint8_t> img ((size_t) (w * h * 4));
+    unsigned rnd = 12345;
+    auto noise = [&rnd] { rnd = rnd * 1103515245u + 12345u; return (int) ((rnd >> 16) % 9) - 4; };
+    auto inPerson = [] (int x, int y)
+    {
+        const int dx = x - 80, dy = y - 62;
+        const bool head = dx * dx + dy * dy < 30 * 30;
+        const int bx = x - 80, by = y - 175;
+        const bool body = bx * bx / 4 + by * by < 62 * 62 / 1 && y > 100;
+        return head || body;
+    };
+
+    int personPixels = 0;
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x)
+        {
+            auto* p = &img[(size_t) ((y * w + x) * 4)];
+            const bool person = inPerson (x, y);
+            personPixels += person ? 1 : 0;
+            const int shade = 205 - y / 3 - std::abs (x - 80) / 6;
+            p[0] = (uint8_t) (person ? (y < 95 ? 222 : 40) + noise() : shade + noise());
+            p[1] = (uint8_t) (person ? (y < 95 ? 182 : 60) + noise() : shade - 3 + noise());
+            p[2] = (uint8_t) (person ? (y < 95 ? 150 : 120) + noise() : shade - 8 + noise());
+            p[3] = 255;
+        }
+
+    auto r = Cutout::removeBackground (img.data(), w, h);
+    CHECK (r.ok);
+    if (r.ok)
+    {
+        CHECK (r.alpha[(size_t) (62 * w + 80)] == 255);    // Gesicht
+        CHECK (r.alpha[(size_t) (150 * w + 80)] == 255);   // Oberkörper am unteren Rand
+        CHECK (r.alpha[(size_t) (5 * w + 5)] == 0);        // Wand oben links
+        CHECK (r.alpha[(size_t) (108 * w + 3)] == 0);      // Wand links neben der Schulter (dunkler)
+        CHECK (std::abs (r.foregroundFraction - (float) personPixels / (float) (w * h)) < 0.04f);
+    }
+
+    // PNG mit Transparenz bleibt, wie es ist
+    for (int i = 0; i < w * h; ++i)
+        img[(size_t) i * 4 + 3] = (uint8_t) ((i % w) < 40 ? 0 : 255);
+    r = Cutout::removeBackground (img.data(), w, h);
+    CHECK (r.ok && r.alreadyTransparent && r.alpha[0] == 0 && r.alpha[(size_t) (w / 2)] == 255);
+
+    // Völlig unruhiges Bild: lieber nichts freistellen
+    for (auto& v : img)
+        v = (uint8_t) (noise() * 30 + 128);
+    for (int i = 0; i < w * h; ++i)
+        img[(size_t) i * 4 + 3] = 255;
+    r = Cutout::removeBackground (img.data(), w, h);
+    CHECK (! r.ok);
+}
+
 int main()
 {
     testNormalise();
     testMatcher();
     testSegmenter();
     testShure();
+    testCutout();
 
     if (failures == 0)
         std::printf ("All tests passed.\n");

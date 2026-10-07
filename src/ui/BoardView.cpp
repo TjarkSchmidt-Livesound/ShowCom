@@ -60,8 +60,14 @@ BoardView::BoardView (AppController& a) : app (a)
     viewport.setScrollBarThickness (8);
     addAndMakeVisible (viewport);
 
+    editButton.setButtonText (txt ("Dashboard anpassen"));
+    editButton.setTooltip (txt ("Auswählen, wer auf dem Board erscheint und in welcher Reihenfolge"));
+    editButton.onClick = [this] { setEditing (! editing); };
+    addAndMakeVisible (editButton);
+
     app.transcript.addListener (this);
     app.state.addChangeListener (this);
+    app.state.boardLayoutChanged.addChangeListener (this);
     transcriptReset();
     startTimerHz (20);
 }
@@ -70,6 +76,7 @@ BoardView::~BoardView()
 {
     app.transcript.removeListener (this);
     app.state.removeChangeListener (this);
+    app.state.boardLayoutChanged.removeChangeListener (this);
 }
 
 //==============================================================================
@@ -90,7 +97,9 @@ void BoardView::transcriptReset()
 
 void BoardView::changeListenerCallback (juce::ChangeBroadcaster*)
 {
-    layoutCards();
+    if (! drag.active)
+        layoutCards();
+    repaint();
 }
 
 void BoardView::timerCallback()
@@ -115,14 +124,32 @@ void BoardView::timerCallback()
 //==============================================================================
 void BoardView::resized()
 {
-    viewport.setBounds (getLocalBounds());
+    auto b = getLocalBounds();
+    auto bar = b.removeFromTop (toolbarH);
+    editButton.setBounds (bar.removeFromRight (editing ? 110 : 200).reduced (8, 5).translated (-6, 0));
+    viewport.setBounds (b);
     layoutCards();
+}
+
+void BoardView::setEditing (bool on)
+{
+    editing = on;
+    drag = {};
+    editButton.setButtonText (on ? txt ("Fertig") : txt ("Dashboard anpassen"));
+    editButton.setColour (juce::TextButton::buttonColourId, on ? Theme::accent : Theme::panelRaised);
+    editButton.setColour (juce::TextButton::textColourOffId, on ? Theme::background : Theme::text);
+    content.setMouseCursor (on ? juce::MouseCursor::DraggingHandCursor : juce::MouseCursor::PointingHandCursor);
+    resized();
+    repaint();
 }
 
 void BoardView::layoutCards()
 {
-    const auto& users = app.state.getUsers();
-    const int n = (int) users.size();
+    cardIds.clear();
+    for (auto* u : app.state.getBoardUsers (editing))
+        cardIds.add (u->id);
+
+    const int n = cardIds.size();
     const int viewW = viewport.getWidth();
     const int viewH = viewport.getHeight() - (n > 0 ? 10 : 0);
 
@@ -131,6 +158,7 @@ void BoardView::layoutCards()
     if (n == 0)
     {
         content.setSize (viewW, viewport.getHeight());
+        content.repaint();
         return;
     }
 
@@ -147,40 +175,416 @@ void BoardView::layoutCards()
 void BoardView::paint (juce::Graphics& g)
 {
     g.fillAll (Theme::background);
+
+    // Leiste über den Kacheln
+    auto bar = getLocalBounds().removeFromTop (toolbarH).toFloat();
+
+    if (editing)
+    {
+        g.setColour (Theme::accent.withAlpha (0.14f));
+        g.fillRect (bar);
+        g.setColour (Theme::accent);
+        g.setFont (Theme::font (13.0f, true));
+        auto t = bar.reduced (16.0f, 0.0f);
+        g.drawText (txt ("DASHBOARD ANPASSEN"), t.removeFromLeft (170.0f), juce::Justification::centredLeft);
+        g.setColour (Theme::textDim);
+        g.setFont (Theme::font (12.5f));
+        g.drawText (txt ("Kacheln mit der Maus ziehen oder mit ◀ ▶ verschieben · Auge blendet ein/aus · "
+                         "gilt für diesen Rechner, jedes Browser-Gerät hat sein eigenes Layout."),
+                    t.withTrimmedRight (120.0f), juce::Justification::centredLeft, true);
+    }
+    else
+    {
+        const auto& all = app.state.getUsers();
+        const int shown = (int) app.state.getBoardUsers (false).size();
+        g.setColour (Theme::textFaint);
+        g.setFont (Theme::font (12.0f, true));
+        juce::String info = "BOARD";
+        if (! all.empty())
+            info << txt ("  ·  ") << shown << " von " << (int) all.size() << " Personen";
+        g.drawText (info, bar.reduced (16.0f, 0.0f), juce::Justification::centredLeft);
+    }
 }
 
 void BoardView::Content::paint (juce::Graphics& g)
 {
     g.fillAll (Theme::background);
 
-    const auto& users = owner.app.state.getUsers();
+    auto& ids = owner.cardIds;
+    auto& rects = owner.cardRects;
 
-    if (users.empty())
+    if (ids.isEmpty())
     {
         g.setColour (Theme::textDim);
         g.setFont (Theme::font (17.0f));
-        g.drawFittedText (txt ("Noch keine Personen. Lege sie unter „Personen“ an, weise Talkback-Eingang und Funkstrecke zu – "
-                               "hier erscheint dann für jede Person eine Kachel."),
+        g.drawFittedText (owner.app.state.getUsers().empty()
+                              ? txt ("Noch keine Personen. Lege sie unter „Personen“ an, weise Talkback-Eingang und Funkstrecke zu – "
+                                     "hier erscheint dann für jede Person eine Kachel.")
+                              : txt ("Alle Personen sind ausgeblendet. Oben rechts auf „Dashboard anpassen“ klicken und wieder einblenden."),
                           getLocalBounds().reduced (60), juce::Justification::centred, 3);
         return;
     }
 
     const auto clip = g.getClipBounds().toFloat();
+    const int n = juce::jmin (ids.size(), (int) rects.size());
 
-    for (size_t i = 0; i < users.size() && i < owner.cardRects.size(); ++i)
-        if (owner.cardRects[i].intersects (clip))
-            owner.paintCard (g, owner.cardRects[i], users[i], (int) i);
+    // Beim Ziehen: übrige Kacheln rücken auf, an der Zielstelle ist ein Platzhalter
+    std::vector<int> slots;   // Slot -> Kachel-Index (-1 = Platzhalter)
+    for (int i = 0; i < n; ++i)
+        if (! (owner.drag.active && i == owner.drag.index))
+            slots.push_back (i);
+    if (owner.drag.active)
+        slots.insert (slots.begin() + juce::jlimit (0, (int) slots.size(), owner.drag.drop), -1);
+
+    for (int s = 0; s < (int) slots.size() && s < n; ++s)
+    {
+        const auto r = rects[(size_t) s];
+        if (! r.intersects (clip))
+            continue;
+
+        if (slots[(size_t) s] < 0)
+        {
+            g.setColour (Theme::accent.withAlpha (0.08f));
+            g.fillRoundedRectangle (r, cardRadius);
+            juce::Path outline, dashed;
+            outline.addRoundedRectangle (r.reduced (1.0f), cardRadius);
+            const float dashes[] = { 8.0f, 6.0f };
+            juce::PathStrokeType (2.0f).createDashedStroke (dashed, outline, dashes, 2);
+            g.setColour (Theme::accent);
+            g.fillPath (dashed);
+            continue;
+        }
+
+        if (auto* u = owner.app.state.findUser (ids[slots[(size_t) s]]))
+        {
+            owner.paintCard (g, r, *u, s);
+            if (owner.editing)
+                owner.paintEditOverlay (g, r, *u, s, n);
+        }
+    }
+
+    // Gezogene Kachel folgt der Maus
+    if (owner.drag.active && owner.drag.index >= 0 && owner.drag.index < n)
+    {
+        if (auto* u = owner.app.state.findUser (ids[owner.drag.index]))
+        {
+            auto r = rects[(size_t) owner.drag.index].withX (owner.drag.mouseX - owner.drag.grabX).translated (0.0f, -6.0f);
+            juce::DropShadow (juce::Colours::black.withAlpha (0.6f), 28, { 0, 12 }).drawForRectangle (g, r.toNearestInt());
+            owner.paintCard (g, r, *u, owner.drag.drop);
+            owner.paintEditOverlay (g, r, *u, owner.drag.drop, n);
+        }
+    }
+}
+
+int BoardView::cardAt (juce::Point<float> p) const
+{
+    for (int i = 0; i < (int) cardRects.size() && i < cardIds.size(); ++i)
+        if (cardRects[(size_t) i].contains (p))
+            return i;
+    return -1;
+}
+
+BoardView::ToolRects BoardView::toolRectsFor (juce::Rectangle<float> card)
+{
+    auto row = card.reduced (10.0f).removeFromBottom (44.0f);
+    ToolRects t;
+    t.left = row.removeFromLeft (40.0f);
+    t.right = row.removeFromRight (40.0f);
+    t.eye = row.reduced (5.0f, 0.0f);
+    return t;
+}
+
+BoardView::Tool BoardView::toolAt (int cardIndex, juce::Point<float> p) const
+{
+    if (! editing || cardIndex < 0 || cardIndex >= (int) cardRects.size())
+        return Tool::none;
+
+    const auto t = toolRectsFor (cardRects[(size_t) cardIndex]);
+    if (t.left.contains (p))  return Tool::left;
+    if (t.right.contains (p)) return Tool::right;
+    if (t.eye.contains (p))   return Tool::eye;
+    return Tool::none;
+}
+
+void BoardView::Content::mouseMove (const juce::MouseEvent& e)
+{
+    const int card = owner.cardAt (e.position);
+    const auto tool = owner.toolAt (card, e.position);
+    if (tool != owner.hoverTool || card != owner.hoverCard)
+    {
+        owner.hoverTool = tool;
+        owner.hoverCard = card;
+        setMouseCursor (! owner.editing ? juce::MouseCursor::PointingHandCursor
+                        : tool != Tool::none ? juce::MouseCursor::PointingHandCursor
+                                             : juce::MouseCursor::DraggingHandCursor);
+        repaint();
+    }
+}
+
+void BoardView::Content::mouseDown (const juce::MouseEvent& e)
+{
+    owner.drag = {};
+    if (! owner.editing)
+        return;
+
+    const int i = owner.cardAt (e.position);
+    if (i >= 0 && owner.toolAt (i, e.position) == Tool::none)
+    {
+        owner.drag.index = i;
+        owner.drag.grabX = e.position.x - owner.cardRects[(size_t) i].getX();
+        owner.drag.mouseX = e.position.x;
+        owner.drag.drop = i;
+    }
+}
+
+void BoardView::Content::mouseDrag (const juce::MouseEvent& e)
+{
+    auto& d = owner.drag;
+    if (! owner.editing || d.index < 0)
+        return;
+
+    if (! d.active && e.getDistanceFromDragStart() < 6)
+        return;
+
+    d.active = true;
+    d.mouseX = e.position.x;
+
+    // Ziel-Slot: dort, wo die Mitte der gezogenen Kachel gerade ist
+    const auto& rects = owner.cardRects;
+    const float centre = d.mouseX - d.grabX + rects[(size_t) d.index].getWidth() * 0.5f;
+    int drop = 0;
+    for (int s = 0; s < (int) rects.size() - 1; ++s)
+        if (centre > rects[(size_t) s].getCentreX() + (rects[(size_t) s].getWidth() + (float) gap) * 0.5f)
+            drop = s + 1;
+    d.drop = juce::jlimit (0, (int) rects.size() - 1, drop);
+
+    const auto rel = e.getEventRelativeTo (&owner.viewport);
+    owner.viewport.autoScroll (rel.x, rel.y, 60, 14);
+    repaint();
 }
 
 void BoardView::Content::mouseUp (const juce::MouseEvent& e)
 {
+    auto d = owner.drag;
+    owner.drag = {};
+
+    if (d.active)
+    {
+        owner.moveCard (d.index, d.drop);
+        return;
+    }
+
     if (! e.mouseWasClicked())
         return;
 
-    const auto& users = owner.app.state.getUsers();
-    for (size_t i = 0; i < owner.cardRects.size() && i < users.size(); ++i)
-        if (owner.cardRects[i].contains (e.position) && owner.onOpenUser)
-            owner.onOpenUser (users[i].id);
+    const int i = owner.cardAt (e.position);
+    if (i < 0)
+        return;
+
+    if (! owner.editing)
+    {
+        if (owner.onOpenUser)
+            owner.onOpenUser (owner.cardIds[i]);
+        return;
+    }
+
+    switch (owner.toolAt (i, e.position))
+    {
+        case Tool::left:  owner.moveCard (i, i - 1); break;
+        case Tool::right: owner.moveCard (i, i + 1); break;
+        case Tool::eye:   owner.toggleHidden (owner.cardIds[i]); break;
+        case Tool::none:  break;
+    }
+}
+
+void BoardView::moveCard (int from, int to)
+{
+    to = juce::jlimit (0, cardIds.size() - 1, to);
+    if (from < 0 || from >= cardIds.size() || from == to)
+    {
+        content.repaint();
+        return;
+    }
+
+    cardIds.move (from, to);
+    commitLayout();
+}
+
+void BoardView::toggleHidden (const juce::String& userId)
+{
+    auto hidden = app.state.getSettings().boardHidden;
+    if (hidden.contains (userId))
+        hidden.removeString (userId);
+    else
+        hidden.add (userId);
+
+    app.state.setBoardLayout (editing ? cardIds : app.state.getSettings().boardOrder, hidden);
+}
+
+void BoardView::commitLayout()
+{
+    // Im Anpassen-Modus enthält cardIds alle Personen; sonst die ausgeblendeten hinten anhängen
+    auto order = cardIds;
+    for (auto* u : app.state.getBoardUsers (true))
+        if (! order.contains (u->id))
+            order.add (u->id);
+
+    app.state.setBoardLayout (order, app.state.getSettings().boardHidden);
+}
+
+void BoardView::paintEditOverlay (juce::Graphics& g, juce::Rectangle<float> r, const UserProfile& u, int index, int count)
+{
+    const bool hidden = ! app.state.isOnBoard (u.id);
+
+    if (hidden)
+    {
+        g.setColour (Theme::background.withAlpha (0.72f));
+        g.fillRoundedRectangle (r, cardRadius);
+        juce::Path outline, dashed;
+        outline.addRoundedRectangle (r.reduced (1.0f), cardRadius);
+        const float dashes[] = { 7.0f, 6.0f };
+        juce::PathStrokeType (1.5f).createDashedStroke (dashed, outline, dashes, 2);
+        g.setColour (Theme::textFaint);
+        g.fillPath (dashed);
+    }
+
+    // Leiste unten abdecken, damit die Knöpfe nicht über der Fußzeile stehen
+    {
+        auto strip = r.withTop (r.getBottom() - 64.0f);
+        juce::Path p;
+        p.addRoundedRectangle (strip.getX(), strip.getY(), strip.getWidth(), strip.getHeight(), cardRadius, cardRadius, false, false, true, true);
+        g.setColour (Theme::panel.withAlpha (0.97f));
+        g.fillPath (p);
+    }
+
+    // Griff im Fotobereich
+    {
+        auto grip = juce::Rectangle<float> (48.0f, 48.0f).withCentre ({ r.getCentreX(), r.getBottom() - 112.0f });
+        g.setColour (Theme::background.withAlpha (0.85f));
+        g.fillEllipse (grip);
+        g.setColour (Theme::border);
+        g.drawEllipse (grip, 1.0f);
+
+        juce::Path arrows;
+        const auto c = grip.getCentre();
+        const float a = 15.0f, w = 5.0f;
+        arrows.addTriangle (c.x - a - 4.0f, c.y, c.x - a + 4.0f, c.y - w, c.x - a + 4.0f, c.y + w);
+        arrows.addTriangle (c.x + a + 4.0f, c.y, c.x + a - 4.0f, c.y - w, c.x + a - 4.0f, c.y + w);
+        arrows.addRectangle (c.x - a + 3.0f, c.y - 1.25f, (a - 3.0f) * 2.0f, 2.5f);
+        g.setColour (Theme::text);
+        g.fillPath (arrows);
+    }
+
+    const auto t = toolRectsFor (r);
+    const bool isHoverCard = hoverCard == index && ! drag.active;
+
+    auto button = [&] (juce::Rectangle<float> b, bool enabled, bool hover)
+    {
+        g.setColour (Theme::background.withAlpha (0.92f));
+        g.fillRoundedRectangle (b, 10.0f);
+        g.setColour (hover && enabled ? Theme::accent : Theme::border);
+        g.drawRoundedRectangle (b.reduced (0.5f), 10.0f, hover && enabled ? 1.5f : 1.0f);
+        return enabled ? Theme::text : Theme::textFaint.withAlpha (0.5f);
+    };
+
+    auto triangle = [&] (juce::Rectangle<float> b, bool left, juce::Colour col)
+    {
+        const auto c = b.getCentre();
+        juce::Path p;
+        if (left) p.addTriangle (c.x - 6.0f, c.y, c.x + 5.0f, c.y - 7.0f, c.x + 5.0f, c.y + 7.0f);
+        else      p.addTriangle (c.x + 6.0f, c.y, c.x - 5.0f, c.y - 7.0f, c.x - 5.0f, c.y + 7.0f);
+        g.setColour (col);
+        g.fillPath (p);
+    };
+
+    triangle (t.left,  true,  button (t.left,  index > 0,         isHoverCard && hoverTool == Tool::left));
+    triangle (t.right, false, button (t.right, index < count - 1, isHoverCard && hoverTool == Tool::right));
+
+    const auto eyeCol = button (t.eye, true, isHoverCard && hoverTool == Tool::eye);
+    {
+        auto b = t.eye;
+        const auto label = hidden ? txt ("Aus") : txt ("An");
+        const bool withLabel = b.getWidth() >= 70.0f;
+        auto icon = juce::Rectangle<float> (22.0f, 14.0f).withCentre ({ withLabel ? b.getCentreX() - 12.0f : b.getCentreX(), b.getCentreY() });
+        juce::Path eye;
+        eye.startNewSubPath (icon.getX(), icon.getCentreY());
+        eye.quadraticTo (icon.getCentreX(), icon.getY() - 5.0f, icon.getRight(), icon.getCentreY());
+        eye.quadraticTo (icon.getCentreX(), icon.getBottom() + 5.0f, icon.getX(), icon.getCentreY());
+        eye.closeSubPath();
+        g.setColour (hidden ? Theme::textFaint : Theme::accent);
+        g.strokePath (eye, juce::PathStrokeType (1.6f));
+        g.fillEllipse (juce::Rectangle<float> (6.0f, 6.0f).withCentre (icon.getCentre()));
+        if (hidden)
+            g.drawLine (icon.getX(), icon.getBottom() + 2.0f, icon.getRight(), icon.getY() - 2.0f, 1.8f);
+
+        if (withLabel)
+        {
+            g.setColour (hidden ? Theme::textFaint : eyeCol);
+            g.setFont (Theme::font (12.5f, true));
+            g.drawText (label, icon.withX (icon.getRight() + 6.0f).withWidth (40.0f), juce::Justification::centredLeft, false);
+        }
+
+        if (hidden)
+        {
+            g.setColour (Theme::textDim);
+            g.setFont (Theme::font (12.0f, true));
+            g.drawText (txt ("AUSGEBLENDET"), r.withTop (r.getBottom() - 92.0f).withHeight (20.0f), juce::Justification::centred, false);
+        }
+    }
+}
+
+juce::Image BoardView::getPhotoLayer (const UserProfile& u, const juce::Image& image, bool cutout, float side, float pixelScale)
+{
+    // Skalieren, Schein und Schatten kosten viel – pro Person und Größe nur einmal rechnen.
+    const int px = juce::jmax (8, juce::roundToInt (side * pixelScale));
+    const auto key = u.avatarFile + (cutout ? "#cut#" : "#") + juce::String (px) + "#" + u.colour.toString();
+
+    auto& entry = photoCache[u.id];
+    if (entry.key == key && entry.image.isValid())
+        return entry.image;
+
+    juce::Image layer;
+
+    if (! cutout)
+    {
+        layer = image.rescaled (px, px, juce::Graphics::highResamplingQuality);
+    }
+    else
+    {
+        const int pad = juce::roundToInt ((float) px * 0.15f);
+        const int total = px + pad * 2;
+        layer = juce::Image (juce::Image::ARGB, total, total, true);
+
+        // Weicher Schein aus der Silhouette (klein weichzeichnen, dann hochskalieren)
+        constexpr int small = 96, spad = 15;
+        juce::Image sil (juce::Image::ARGB, small + spad * 2, small + spad * 2, true);
+        {
+            juce::Graphics sg (sil);
+            sg.drawImage (image, juce::Rectangle<float> ((float) spad, (float) spad, (float) small, (float) small));
+        }
+        juce::ImageConvolutionKernel kernel (11);
+        kernel.createGaussianBlur (5.0f);
+        juce::Image blurred (juce::Image::ARGB, sil.getWidth(), sil.getHeight(), true);
+        kernel.applyToImage (blurred, sil, sil.getBounds());
+
+        juce::Graphics lg (layer);
+        lg.setImageResamplingQuality (juce::Graphics::highResamplingQuality);
+        const auto all = layer.getBounds().toFloat();
+        const auto inner = all.reduced ((float) pad);
+        const float k = inner.getWidth() / (float) small;
+        const auto glowArea = inner.withSizeKeepingCentre ((float) blurred.getWidth() * k, (float) blurred.getHeight() * k);
+
+        lg.setColour (u.colour.brighter (0.7f).withAlpha (0.55f));
+        lg.drawImage (blurred, glowArea, juce::RectanglePlacement::stretchToFit, true);
+        lg.setColour (juce::Colours::black.withAlpha (0.45f));
+        lg.drawImage (blurred, glowArea.translated (0.0f, inner.getHeight() * 0.025f).reduced (inner.getWidth() * 0.02f),
+                      juce::RectanglePlacement::stretchToFit, true);
+        lg.setOpacity (1.0f);
+        lg.drawImage (image, inner, juce::RectanglePlacement::stretchToFit);
+    }
+
+    entry = { key, layer };
+    return layer;
 }
 
 //==============================================================================
@@ -393,19 +797,45 @@ void BoardView::paintCard (juce::Graphics& g, juce::Rectangle<float> r, const Us
 
         // Foto oder Initialen
         const auto image = app.state.getAvatar (u.id);
+        const bool cutout = image.isValid() && app.state.isAvatarCutout (u.id);
         auto photoBox = photo.reduced (photo.getWidth() * 0.06f, 0.0f);
 
-        if (image.isValid())
+        if (cutout)
+        {
+            // Freigestellt wie auf dem RF-Board: Person steht groß vor den Strahlen,
+            // der Kopf ragt leicht in den Namensbereich.
+            // Nur-Funk-Karte: Person groß wie auf dem RF-Board, Schultern laufen seitlich aus der Kachel
+            const float side = talkbackCard ? juce::jmin (r.getWidth() * 1.12f, photo.getBottom() - (header.getY() + 14.0f))
+                                            : juce::jmin (r.getWidth() * 1.5f, (photo.getBottom() - header.getY()) * 0.95f);
+            auto imgArea = juce::Rectangle<float> (side, side).withCentre ({ photo.getCentreX(), photo.getBottom() + 4.0f - side * 0.5f });
+
+            // Person + Schein einmal in Zielgröße vorberechnen, danach nur noch 1:1 kopieren
+            const float pixelScale = g.getInternalContext().getPhysicalPixelScaleFactor();
+            const auto layer = getPhotoLayer (u, image, true, side, pixelScale);
+            const float pad = side * 0.15f;
+            g.drawImage (layer, imgArea.expanded (pad), juce::RectanglePlacement::stretchToFit);
+        }
+        else if (image.isValid())
         {
             const float side = juce::jmin (photoBox.getWidth(), photoBox.getHeight());
             auto imgArea = juce::Rectangle<float> (side, side).withCentre ({ photoBox.getCentreX(), photoBox.getBottom() - side * 0.5f });
-            g.drawImage (image, imgArea, juce::RectanglePlacement::centred | juce::RectanglePlacement::fillDestination);
+            const auto layer = getPhotoLayer (u, image, false, side, g.getInternalContext().getPhysicalPixelScaleFactor());
+            g.drawImage (layer, imgArea, juce::RectanglePlacement::stretchToFit);
         }
         else
         {
             g.setColour (u.colour.brighter (0.6f).withAlpha (0.9f));
             g.setFont (Theme::font (juce::jmin (photoBox.getWidth(), photoBox.getHeight()) * 0.42f, true));
             g.drawText (Theme::initials (u.name), photoBox, juce::Justification::centred, false);
+        }
+
+        // Kopfbereich leicht abdunkeln, damit der Name auf dem Foto lesbar bleibt
+        if (cutout)
+        {
+            juce::ColourGradient shade (juce::Colours::black.withAlpha (0.42f), r.getX(), r.getY(),
+                                        juce::Colours::black.withAlpha (0.0f), r.getX(), header.getBottom() + 10.0f, false);
+            g.setGradientFill (shade);
+            g.fillRect (r.withBottom (header.getBottom() + 10.0f));
         }
 
         // Unterer Bereich abdunkeln, Foto weich auslaufen lassen
@@ -480,9 +910,12 @@ void BoardView::paintCard (juce::Graphics& g, juce::Rectangle<float> r, const Us
         if (rf.assigned)
             drawBattery (g, topRow.removeFromRight (46.0f).reduced (0.0f, 1.0f), batt, batt >= 0);
 
-        g.setColour (Theme::text);
+        auto nameRow = h.removeFromTop (30.0f);
         g.setFont (Theme::font (26.0f, true));
-        g.drawText (u.name, h.removeFromTop (30.0f), juce::Justification::centredLeft, true);
+        g.setColour (juce::Colours::black.withAlpha (0.45f));
+        g.drawText (u.name, nameRow.translated (0.0f, 1.5f), juce::Justification::centredLeft, true);
+        g.setColour (Theme::text);
+        g.drawText (u.name, nameRow, juce::Justification::centredLeft, true);
 
         juce::String sub;
         if (! st.name.empty())

@@ -340,10 +340,22 @@ namespace
         state = juce::JSON::parse (httpRequest (18765, "GET", "/api/d/" + id + "/state", {}, st));
         check (! (bool) state["persons"][1]["visible"] && (bool) state["persons"][0]["visible"], "Web: Person pro Gerät ausblenden");
 
+        // Dashboard anpassen: eigene Reihenfolge + Ausblenden in einem Rutsch
+        httpRequest (18765, "POST", "/api/d/" + id + "/layout", R"({"order":["u2","u1","gibtsnicht"],"hidden":["u1"]})", st);
+        state = juce::JSON::parse (httpRequest (18765, "GET", "/api/d/" + id + "/state", {}, st));
+        check (st == 200 && state["persons"][0]["id"].toString() == "u2" && state["persons"][1]["id"].toString() == "u1",
+               "Web: eigene Reihenfolge der Kacheln");
+        check ((bool) state["persons"][0]["visible"] && ! (bool) state["persons"][1]["visible"], "Web: Layout setzt Sichtbarkeit");
+
+        // Personen lassen sich über das Web weder anlegen noch löschen
+        httpRequest (18765, "POST", "/api/d/" + id + "/addPerson", R"({"name":"X"})", st);
+        check (st == 404, "Web: kein Anlegen von Personen über das Web");
+
         // Ein zweites Gerät hat seine eigene Sicht
         const auto id2 = juce::JSON::parse (httpRequest (18765, "POST", "/api/register", {}, st))["id"].toString();
         auto state2 = juce::JSON::parse (httpRequest (18765, "GET", "/api/d/" + id2 + "/state", {}, st));
-        check (id2 != id && (bool) state2["persons"][1]["visible"] && ! (bool) state2["entries"][0]["mention"],
+        check (id2 != id && state2["persons"][0]["id"].toString() == "u1" && (bool) state2["persons"][1]["visible"]
+                 && ! (bool) state2["entries"][0]["mention"],
                "Web: zweites Gerät unabhängig (eigene Sichtbarkeit, kein Alarm-Name)");
 
         web.removeDevice (id2);
@@ -351,6 +363,17 @@ namespace
         check (st == 404, "Web: am Host entferntes Gerät hat keinen Zugriff mehr");
 
         check (file.loadFileAsString().contains (id) && ! file.loadFileAsString().contains (id2), "Web: Geräte werden gespeichert");
+
+        // Layout überlebt einen Neustart
+        {
+            WebServer web2;
+            web2.setDevicesFile (file);
+            bool ok = false;
+            for (auto& d : web2.getDevices())
+                if (d.id == id)
+                    ok = d.order.size() == 3 && d.order[0] == "u2" && d.hidden.count ("u1") == 1;
+            check (ok, "Web: Dashboard-Layout wird gespeichert");
+        }
 
         web.configure (false, 0);
         check (! web.isRunning(), "Web: Server gestoppt");

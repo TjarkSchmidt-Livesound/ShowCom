@@ -250,8 +250,12 @@ void AppController::timerCallback()
         // Avatar als PNG, nur neu kodieren, wenn sich das Bild geändert hat
         if (u.avatarFile.isNotEmpty())
         {
+            const bool cut = state.isAvatarCutout (u.id);
+            const auto key = u.avatarFile + (cut ? "#cut" : "");
+            p.cutout = cut;
+
             auto& cached = webAvatarCache[u.id];
-            if (cached.first != u.avatarFile || cached.second == nullptr)
+            if (cached.first != key || cached.second == nullptr)
             {
                 auto block = std::make_shared<juce::MemoryBlock>();
                 juce::MemoryOutputStream out (*block, false);
@@ -260,13 +264,13 @@ void AppController::timerCallback()
                 if (img.isValid() && png.writeImageToStream (img, out))
                 {
                     out.flush();
-                    cached = { u.avatarFile, block };
+                    cached = { key, block };
                 }
             }
 
             if (cached.second != nullptr)
             {
-                p.avatarKey = juce::String (u.avatarFile.hashCode64());
+                p.avatarKey = juce::String (key.hashCode64());
                 snap->avatars[u.id] = cached.second;
             }
         }

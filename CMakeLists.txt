@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(ShowCom VERSION 0.5.0 LANGUAGES C CXX)
+project(ShowCom VERSION 0.6.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -55,7 +55,8 @@ endif()
 add_library(tbs_core STATIC
     src/core/KeywordMatcher.cpp
     src/core/SpeechSegmenter.cpp
-    src/core/ShureParser.cpp)
+    src/core/ShureParser.cpp
+    src/core/Cutout.cpp)
 target_include_directories(tbs_core PUBLIC src/core)
 target_compile_features(tbs_core PUBLIC cxx_std_17)
 set_target_properties(tbs_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -114,6 +115,13 @@ if(WIN32)
         message(WARNING "ASIO support: OFF. Set -DTBS_ASIO_SDK_DIR=<path to asiosdk> to enable ASIO.")
     endif()
     target_compile_definitions(ShowCom PRIVATE JUCE_WASAPI=1 JUCE_DIRECTSOUND=0)
+endif()
+
+if(APPLE)
+    # Profilbilder freistellen mit Apple Vision (macOS 12+, ältere Systeme nutzen das eigene Verfahren)
+    target_sources(ShowCom PRIVATE src/CutoutMac.mm)
+    set_source_files_properties(src/CutoutMac.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
+    target_link_libraries(ShowCom PRIVATE "-framework Vision" "-framework CoreVideo")
 endif()
 
 if(UNIX AND NOT APPLE)

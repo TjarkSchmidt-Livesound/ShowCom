@@ -29,6 +29,7 @@ struct UserProfile
     bool talkbackLog = true;    // Talkback dieser Person mitloggen; aus = nur Funküberwachung (Redner, Band)
     juce::String rfDeviceId;    // zugewiesene Funkstrecke (leer = keine)
     int rfChannel = 0;          // Empfängerkanal 1..4
+    bool cutout = true;         // Profilbild freistellen (Hintergrund ausblenden)
 };
 
 struct AppSettings
@@ -44,6 +45,8 @@ struct AppSettings
     bool webEnabled = true;             // Browser-Zugriff im lokalen Netz
     int webPort = 8080;
     bool liveText = true;               // Zwischenstände schon während des Sprechens
+    juce::StringArray boardOrder;       // eigene Reihenfolge der Kacheln am Host (Personen-IDs)
+    juce::StringArray boardHidden;      // am Host ausgeblendete Kacheln
     juce::String audioDeviceState;      // XML von AudioDeviceManager
     std::vector<WirelessDeviceConfig> wirelessDevices;
 };
@@ -79,11 +82,30 @@ public:
     /** Liefert den Benutzer, dem ein Eingang zugewiesen ist (oder nullptr). */
     const UserProfile* findUserForChannel (int channel, const juce::String& excludeId = {}) const;
 
+    // --- Board (Dashboard am Host) ---------------------------------------------
+    /** Personen in Board-Reihenfolge; ausgeblendete nur mit includeHidden. */
+    std::vector<const UserProfile*> getBoardUsers (bool includeHidden) const;
+    bool isOnBoard (const juce::String& userId) const      { return ! settings.boardHidden.contains (userId); }
+
+    /** Speichert Reihenfolge/Sichtbarkeit. Meldet nur über boardLayoutChanged (kein Neuaufbau von Audio/Web). */
+    void setBoardLayout (const juce::StringArray& order, const juce::StringArray& hidden);
+    juce::ChangeBroadcaster boardLayoutChanged;
+
     // --- Avatare --------------------------------------------------------------
-    /** Lädt ein beliebiges Bild, schneidet es quadratisch zu und speichert es als PNG. */
+    /** Lädt ein beliebiges Bild, schneidet es quadratisch zu und speichert es als PNG (plus freigestellte Fassung). */
     bool setAvatarFromFile (const juce::String& userId, const juce::File& imageFile);
     void clearAvatar (const juce::String& userId);
+
+    /** Bild zur Anzeige: freigestellt, wenn eingeschaltet und möglich, sonst das Foto. */
     juce::Image getAvatar (const juce::String& userId) const;
+    juce::Image getAvatarOriginal (const juce::String& userId) const;
+
+    enum class CutoutState { noImage, cut, notPossible, off };
+    CutoutState getCutoutState (const juce::String& userId) const;
+    bool isAvatarCutout (const juce::String& userId) const  { return getCutoutState (userId) == CutoutState::cut; }
+
+    /** Freistellung berechnen (Apple Vision auf dem Mac, sonst eigenes Verfahren). Leeres Bild = nicht möglich. */
+    static juce::Image makeCutout (const juce::Image& square);
 
     // --- Einstellungen --------------------------------------------------------
     const AppSettings& getSettings() const                  { return settings; }
@@ -99,7 +121,11 @@ private:
 
     std::vector<UserProfile> users;
     AppSettings settings;
-    mutable std::map<juce::String, juce::Image> avatarCache;
+    juce::File cutoutFileFor (const UserProfile&) const;
+    juce::Image getCutoutImage (const UserProfile&) const;
+
+    mutable std::map<juce::String, juce::Image> avatarCache;   // Originale
+    mutable std::map<juce::String, juce::Image> cutoutCache;   // freigestellt (ungültig = nicht möglich)
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AppState)
 };

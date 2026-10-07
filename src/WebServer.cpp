@@ -1,5 +1,6 @@
 #include "WebServer.h"
 #include "KeywordMatcher.h"
+#include "BoardLayout.h"
 
 #include <BinaryData.h>
 
@@ -375,6 +376,28 @@ WebServer::Response WebServer::handle (const juce::String& method, const juce::S
             return jsonResponse (juce::var (true));
         }
 
+        if (method == "POST" && action == "layout")
+        {
+            // Dashboard anpassen: Reihenfolge und ausgeblendete Personen.
+            // Personen anlegen oder löschen geht hier bewusst nicht.
+            const auto json = juce::JSON::parse (body);
+            if (! json.isObject())
+                return jsonResponse (juce::var ("bad json"), 400);
+
+            const juce::ScopedLock sl (devicesLock);
+            auto& d = devices[id];
+            if (json.hasProperty ("order"))
+                d.order = BoardLayout::sanitise (json["order"]);
+            if (json.hasProperty ("hidden"))
+            {
+                d.hidden.clear();
+                for (auto& h : BoardLayout::sanitise (json["hidden"]))
+                    d.hidden.insert (h);
+            }
+            saveDevices();
+            return jsonResponse (juce::var (true));
+        }
+
         return jsonResponse (juce::var ("unknown action"), 404);
     }
 
@@ -422,8 +445,13 @@ WebServer::Response WebServer::stateJson (const juce::String& deviceId)
 
     juce::Array<juce::var> persons, entries, live, hidden;
 
+    juce::StringArray ids;
     for (auto& p : snap->persons)
+        ids.add (p.id);
+
+    for (int index : BoardLayout::order (ids, device.order))
     {
+        const auto& p = snap->persons[(size_t) index];
         auto* o = new juce::DynamicObject();
         o->setProperty ("id", p.id);
         o->setProperty ("name", p.name);
@@ -431,6 +459,7 @@ WebServer::Response WebServer::stateJson (const juce::String& deviceId)
         o->setProperty ("colour", p.colour);
         o->setProperty ("avatar", p.avatarKey.isNotEmpty() ? "/avatar/" + p.id + "?v=" + p.avatarKey : juce::String());
         o->setProperty ("talkback", p.talkback);
+        o->setProperty ("cutout", p.cutout);
         o->setProperty ("speaking", p.speaking);
         o->setProperty ("visible", device.hidden.count (p.id) == 0);
         o->setProperty ("rf", rfJson (p));
@@ -522,6 +551,7 @@ void WebServer::loadDevices()
             if (auto* h = v["hidden"].getArray())
                 for (auto& x : *h)
                     d.hidden.insert (x.toString());
+            d.order = BoardLayout::sanitise (v["order"]);
             devices[d.id] = d;
         }
     }
@@ -544,6 +574,10 @@ void WebServer::saveDevices() const
         for (auto& x : d.hidden)
             h.add (x);
         o->setProperty ("hidden", h);
+        juce::Array<juce::var> ord;
+        for (auto& x : d.order)
+            ord.add (x);
+        o->setProperty ("order", ord);
         arr.add (juce::var (o));
     }
 

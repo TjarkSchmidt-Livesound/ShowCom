@@ -104,16 +104,41 @@
   .foot .c, .foot .d { font-size: 11px; color: var(--dim); }
   .foot .d { text-align: right; }
 
-  /* --- Personen-Auswahl ------------------------------------------------- */
-  #people { position: fixed; right: 12px; top: 64px; z-index: 10; background: var(--raised); border: 1px solid var(--border);
-            border-radius: 12px; padding: 10px; width: 260px; display: none; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
-  #people.show { display: block; }
-  #people h3 { margin: 4px 6px 8px; font-size: 13px; color: var(--dim); }
-  #people label { display: flex; align-items: center; gap: 10px; padding: 7px 6px; border-radius: 8px; cursor: pointer; }
-  #people label:hover { background: rgba(255,255,255,.05); }
-  #people .dot { width: 10px; height: 10px; border-radius: 50%; }
-  #people small { color: var(--faint); margin-left: auto; }
-  #people p { color: var(--faint); font-size: 12px; margin: 8px 6px 2px; }
+  /* --- Freigestellte Profilbilder: Person steht frei vor den Strahlen ------- */
+  .photo.cut { overflow: visible; }
+  .card:not(.tb) .photo.cut img { position: absolute; bottom: 0; left: 50%; transform: translateX(-50%); width: 150%; max-height: none; margin: 0; }
+  .photo.cut img { width: 112%; max-width: none; margin: 0 -6%;
+                   filter: drop-shadow(0 0 22px color-mix(in srgb, var(--c) 55%, transparent)) drop-shadow(0 6px 10px rgba(0,0,0,.45));
+                   -webkit-mask-image: linear-gradient(180deg, #000 78%, transparent 100%);
+                           mask-image: linear-gradient(180deg, #000 78%, transparent 100%); }
+  .card:not(.tb) .photo.cut { margin-top: -34px; }   /* Kopf ragt leicht in den Namensbereich, wie auf dem RF-Board */
+  .head { pointer-events: none; }
+  .head .name, .head .sub, .head .num { text-shadow: 0 1px 6px rgba(0,0,0,.55); }
+
+  /* --- Dashboard anpassen ------------------------------------------------ */
+  #editbar { display: none; align-items: center; gap: 12px; padding: 10px 16px; background: color-mix(in srgb, var(--ok) 16%, var(--panel));
+             border-bottom: 1px solid var(--border); flex: 0 0 auto; flex-wrap: wrap; z-index: 4; }
+  body.editing #editbar { display: flex; }
+  #editbar b { color: var(--ok); }
+  #editbar span { color: var(--dim); font-size: 13px; }
+  #editbar .btn { margin-left: auto; }
+  .tools { display: none; position: absolute; z-index: 6; left: 0; right: 0; bottom: 0; padding: 10px; gap: 8px; justify-content: space-between;
+           background: color-mix(in srgb, var(--panel) 97%, transparent); }
+  body.editing .tools { display: flex; }
+  .tools button { flex: 1; height: 44px; white-space: nowrap; overflow: hidden; padding: 0 4px; border-radius: 10px; border: 1px solid var(--border); background: rgba(22,23,25,.92);
+                  font-weight: 800; cursor: pointer; font-size: 15px; }
+  .tools .eye { flex: 2; font-size: 13px; }
+  .tools button:disabled { opacity: .35; cursor: default; }
+  .tools .eye.off { color: var(--faint); }
+  .grip { display: none; position: absolute; z-index: 6; bottom: 96px; left: 50%; transform: translateX(-50%); width: 56px; height: 56px;
+          border-radius: 50%; background: rgba(22,23,25,.85); border: 1px solid var(--border); color: var(--text);
+          align-items: center; justify-content: center; font-size: 26px; cursor: grab; touch-action: none; }
+  body.editing .grip { display: flex; }
+  body.editing .card { cursor: grab; user-select: none; -webkit-user-select: none; }
+  body.editing .card.hiddenp > :not(.tools):not(.grip) { opacity: .28; filter: grayscale(1); }
+  body.editing .card.hiddenp { border-style: dashed; border-color: var(--faint); }
+  .card.dragging { opacity: .9; z-index: 50; box-shadow: 0 18px 40px rgba(0,0,0,.6); pointer-events: none; }
+  .slot { flex: 1 0 200px; max-width: 300px; border: 2px dashed var(--ok); border-radius: 16px; background: rgba(53,214,180,.06); }
 
   @media (max-width: 700px) {
     body { display: block; height: auto; }
@@ -122,8 +147,12 @@
     #board { flex-direction: column; overflow-x: hidden; }
     .card { max-width: none; height: auto; min-height: 0; flex: 0 0 auto; }
     .card .photo { height: 220px; flex: 0 0 auto; }
-    .card.tb .photo { height: 150px; }
+    .card.tb .photo { height: 170px; }
     .comm { min-height: 120px; max-height: 260px; }
+    .slot { flex: 0 0 auto; max-width: none; }
+    .card:not(.tb) .photo.cut { margin-top: -20px; }
+    .photo.cut img { width: auto; height: 128%; max-height: none; }
+    .card:not(.tb) .photo.cut img { width: auto; height: 125%; }
     .field input { width: 110px; }
   }
 </style>
@@ -137,11 +166,11 @@
   </div>
   <div class="spacer"></div>
   <button id="sound" class="btn" title="Ton und Vibration bei Alarm">🔔 Ton aus</button>
-  <button id="peopleBtn" class="btn">Personen</button>
+  <button id="editBtn" class="btn" title="Wer erscheint und in welcher Reihenfolge – nur für dieses Gerät">✎ Dashboard anpassen</button>
 </header>
 <div id="banner"><img id="bimg" alt=""><div><div class="t" id="bt"></div><div class="q" id="bq"></div></div><div class="ack">TIPPEN = GESEHEN</div></div>
+<div id="editbar"><b>Dashboard anpassen</b><span>Kacheln ziehen oder mit ◀ ▶ verschieben · 👁 blendet ein/aus · gilt nur für dieses Gerät. Personen anlegen und löschen geht nur am ShowCom-Rechner.</span><button id="doneBtn" class="btn active">Fertig</button></div>
 <main id="board"></main>
-<div id="people"><h3>Angezeigte Personen</h3><div id="plist"></div><p>Personen anlegen und löschen geht nur am ShowCom-Rechner.</p></div>
 
 <script>
 'use strict';
@@ -211,16 +240,87 @@ setInterval(() => {
   }
 }, 200);
 
-$('peopleBtn').onclick = e => { e.stopPropagation(); $('people').classList.toggle('show'); };
-document.addEventListener('click', e => { if (!$('people').contains(e.target)) $('people').classList.remove('show'); });
+// --- Dashboard anpassen --------------------------------------------------------
+let editing = false, drag = null, layoutBusy = false;
 
-function renderPeopleList() {
-  $('plist').innerHTML = state.persons.map(p =>
-    `<label><input type="checkbox" data-u="${esc(p.id)}" ${p.visible ? 'checked' : ''}>` +
-    `<span class="dot" style="background:${esc(p.colour)}"></span>${esc(p.name)}<small>${p.talkback ? 'Talkback' : 'nur Funk'}</small></label>`).join('');
-  $('plist').querySelectorAll('input').forEach(cb => cb.onchange = () =>
-    fetch(api('visibility'), { method: 'POST', body: JSON.stringify({ user: cb.dataset.u, visible: cb.checked }) }).then(poll));
+function setEditing(on) {
+  editing = on;
+  document.body.classList.toggle('editing', on);
+  $('editBtn').classList.toggle('active', on);
+  if (state) render();
 }
+$('editBtn').onclick = () => setEditing(!editing);
+$('doneBtn').onclick = () => setEditing(false);
+
+async function saveLayout() {
+  layoutBusy = true;
+  try {
+    await fetch(api('layout'), { method: 'POST', body: JSON.stringify({
+      order: state.persons.map(p => p.id), hidden: state.persons.filter(p => !p.visible).map(p => p.id) }) });
+  } finally { layoutBusy = false; }
+}
+function movePerson(id, delta) {
+  const i = state.persons.findIndex(p => p.id === id), j = i + delta;
+  if (i < 0 || j < 0 || j >= state.persons.length) return;
+  const [p] = state.persons.splice(i, 1); state.persons.splice(j, 0, p);
+  render(); saveLayout();
+}
+function toggleVisible(id) {
+  const p = state.persons.find(x => x.id === id); if (!p) return;
+  p.visible = !p.visible; render(); saveLayout();
+}
+
+// Ziehen mit Maus, Stift oder Finger
+document.addEventListener('pointerdown', e => {
+  if (!editing || e.button > 0 || e.target.closest('.tools')) return;
+  const card = e.target.closest('.card'); if (!card) return;
+  if (e.pointerType !== 'mouse' && !e.target.closest('.grip')) return;   // Touch: am Griff ziehen, sonst normal scrollen
+  drag = { card, id: card.dataset.id, x0: e.clientX, y0: e.clientY, started: false, pid: e.pointerId };
+});
+document.addEventListener('pointermove', e => {
+  if (!drag || e.pointerId !== drag.pid) return;
+  const dx = e.clientX - drag.x0, dy = e.clientY - drag.y0;
+  if (!drag.started) {
+    if (Math.hypot(dx, dy) < 6) return;
+    const r = drag.card.getBoundingClientRect();
+    drag.started = true; drag.offX = drag.x0 - r.left; drag.offY = drag.y0 - r.top;
+    drag.slot = document.createElement('div'); drag.slot.className = 'slot'; drag.slot.style.minHeight = r.height + 'px';
+    drag.card.parentNode.insertBefore(drag.slot, drag.card);
+    Object.assign(drag.card.style, { position: 'fixed', width: r.width + 'px', height: r.height + 'px', left: r.left + 'px', top: r.top + 'px' });
+    drag.card.classList.add('dragging');
+  }
+  e.preventDefault();
+  drag.card.style.left = (e.clientX - drag.offX) + 'px';
+  drag.card.style.top = (e.clientY - drag.offY) + 'px';
+
+  // Platzhalter dorthin, wo der Finger gerade ist
+  const board = $('board'), vertical = getComputedStyle(board).flexDirection === 'column';
+  const others = [...board.querySelectorAll('.card:not(.dragging)')];
+  let before = null;
+  for (const o of others) {
+    const r = o.getBoundingClientRect();
+    if (vertical ? e.clientY < r.top + r.height / 2 : e.clientX < r.left + r.width / 2) { before = o; break; }
+  }
+  if (before !== drag.slot.nextSibling) board.insertBefore(drag.slot, before);
+
+  // am Rand automatisch scrollen
+  if (!vertical) { const b = board.getBoundingClientRect();
+    if (e.clientX < b.left + 40) board.scrollLeft -= 14; else if (e.clientX > b.right - 40) board.scrollLeft += 14; }
+  else { if (e.clientY < 80) scrollBy(0, -14); else if (e.clientY > innerHeight - 60) scrollBy(0, 14); }
+}, { passive: false });
+function endDrag() {
+  if (!drag) return;
+  const d = drag; drag = null;
+  if (!d.started) return;
+  d.card.classList.remove('dragging');
+  d.card.removeAttribute('style'); d.card.style.setProperty('--c', d.card._c);
+  d.slot.replaceWith(d.card);
+  const ids = [...$('board').querySelectorAll('.card')].map(c => c.dataset.id);
+  state.persons.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+  render(); saveLayout();
+}
+document.addEventListener('pointerup', endDrag);
+document.addEventListener('pointercancel', endDrag);
 
 // --- Alarm ---------------------------------------------------------------------
 function acknowledge() {
@@ -248,6 +348,7 @@ function checkAlert() {
   $('bt').textContent = `${kw.toUpperCase()} ERWÄHNT · ${p.name}${p.role ? ' (' + p.role + ')' : ''} · ${a.time}`;
   $('bq').innerHTML = '„' + highlight(a.text, a.ranges) + '“';
   $('bimg').src = p.avatar || '/icon.png';
+  $('bimg').style.background = p.cutout ? `radial-gradient(circle at 50% 35%, ${p.colour}, #1f2023 90%)` : '';
   $('banner').classList.add('show');
 
   // gleiche Ansage (Live -> Endergebnis) nur einmal piepen
@@ -261,29 +362,42 @@ function cardFor(p) {
   if (c) return c;
   c = document.createElement('section');
   c.className = 'card';
+  c.dataset.id = p.id;
   c.innerHTML = `<div class="bgfx"></div><div class="head"></div><div class="photo"></div><div class="lower">` +
-                `<div class="comm"></div><div class="badges"></div><div class="graph"></div><div class="foot"></div></div>`;
+                `<div class="comm"></div><div class="badges"></div><div class="graph"></div><div class="foot"></div></div>` +
+                `<div class="grip" aria-hidden="true">✥</div>` +
+                `<div class="tools"><button class="left" title="nach vorn">◀</button><button class="eye"></button><button class="right" title="nach hinten">▶</button></div>`;
+  c.querySelector('.left').onclick = () => movePerson(p.id, -1);
+  c.querySelector('.right').onclick = () => movePerson(p.id, 1);
+  c.querySelector('.eye').onclick = () => toggleVisible(p.id);
   cards.set(p.id, c);
   return c;
 }
 
 function render() {
-  const visible = state.persons.filter(p => p.visible);
+  if (drag && drag.started) return;   // nicht unter dem Finger umbauen
+  const visible = editing ? state.persons : state.persons.filter(p => p.visible);
   const board = $('board');
 
   if (!visible.length) {
-    board.innerHTML = `<div class="empty">${state.persons.length ? 'Alle Personen ausgeblendet – oben rechts unter „Personen“ einblenden.'
+    board.innerHTML = `<div class="empty">${state.persons.length ? 'Alle Personen ausgeblendet – oben rechts unter „Dashboard anpassen“ wieder einblenden.'
                                                                  : 'Am ShowCom-Rechner sind noch keine Personen angelegt.'}</div>`;
     cards.clear();
     return;
   }
   if (board.querySelector('.empty')) board.innerHTML = '';
 
-  // Reihenfolge wie am Host
+  // Reihenfolge dieses Geräts (kommt so vom Server)
   visible.forEach((p, i) => {
     const c = cardFor(p);
     if (board.children[i] !== c) board.insertBefore(c, board.children[i] || null);
-    updateCard(c, p, state.persons.indexOf(p));
+    updateCard(c, p, i);
+    c.classList.toggle('hiddenp', !p.visible);
+    const eye = c.querySelector('.eye');
+    eye.textContent = p.visible ? '👁 An' : '🚫 Aus';
+    eye.classList.toggle('off', !p.visible);
+    c.querySelector('.left').disabled = i === 0;
+    c.querySelector('.right').disabled = i === visible.length - 1;
   });
   [...board.children].forEach(el => { if (!visible.some(p => cards.get(p.id) === el)) { el.remove(); } });
 }
@@ -300,7 +414,7 @@ function updateCard(c, p, index) {
 
   c.classList.toggle('tb', p.talkback);
   c.classList.toggle('speaking', !!p.speaking);
-  c.style.setProperty('--c', p.colour);
+  c.style.setProperty('--c', p.colour); c._c = p.colour;
   c.style.setProperty('--status', status);
   c.style.setProperty('--glowY', p.talkback ? '22%' : '45%');
 
@@ -309,8 +423,9 @@ function updateCard(c, p, index) {
                `<div class="sub">${esc(sub)}</div>` + (rf.assigned ? battSvg(batt) : '');
   if (c._head !== head) { c.querySelector('.head').innerHTML = head; c._head = head; }
 
-  const photoKey = p.avatar || 'ini';
+  const photoKey = (p.avatar || 'ini') + (p.cutout ? ':cut' : '');
   if (c._photo !== photoKey) {
+    c.querySelector('.photo').classList.toggle('cut', !!(p.avatar && p.cutout));
     c.querySelector('.photo').innerHTML = p.avatar ? `<img src="${esc(p.avatar)}" alt="">`
       : `<div class="ini">${esc(p.name.split(/[\s-]+/).filter(Boolean).map(w => w[0]).slice(0, 2).join('').toUpperCase())}</div>`;
     c._photo = photoKey;
@@ -359,7 +474,7 @@ function updateCard(c, p, index) {
 // --- Abfrage ---------------------------------------------------------------------
 let polling = false;
 async function poll() {
-  if (polling) return;
+  if (polling || layoutBusy || (drag && drag.started)) return;
   polling = true;
   try {
     const r = await fetch(api('state'), { cache: 'no-store' });
@@ -380,7 +495,6 @@ async function poll() {
 
     checkAlert();
     render();
-    if ($('people').classList.contains('show') === false) renderPeopleList();
   } catch (e) {
     $('status').className = 'pill lost';
     $('status').textContent = 'Verbindung verloren';

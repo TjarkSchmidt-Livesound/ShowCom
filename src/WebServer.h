@@ -14,7 +14,7 @@
 
     - Jedes Gerät (Handy, Tablet, Laptop) bekommt beim ersten Aufruf eine eigene Geräte-ID
       und damit eine eigene Oberfläche mit eigenem Alarm-Namen.
-    - Über das Web lassen sich Personen nur ein- und ausblenden.
+    - Über das Web lässt sich das eigene Dashboard anpassen (wer erscheint, in welcher Reihenfolge).
       Personen anlegen/löschen und Geräte entfernen geht nur am Host.
 
     Die Daten kommen als Momentaufnahme (publish) vom Message-Thread; die Anfragen laufen in
@@ -31,6 +31,7 @@ public:
         juce::String id, name, role, colour;   // colour als "#rrggbb"
         juce::String avatarKey;                // ändert sich, wenn sich das Bild ändert (leer = keins)
         bool talkback = true, speaking = false;
+        bool cutout = false;                   // Bild ist freigestellt (transparenter Hintergrund)
         bool rfAssigned = false, rfOnline = false, rfKnown = false;
         WirelessChannelState rf;
         std::vector<float> history;            // HF-Verlauf 0..1
@@ -70,6 +71,7 @@ public:
         juce::String label;        // frei, z. B. "iPad Monitor"
         juce::String keywords;     // eigener Alarm-Name (kommagetrennt)
         std::set<juce::String> hidden;
+        juce::StringArray order;   // eigene Reihenfolge der Kacheln
         juce::int64 lastSeenMs = 0;
     };
 

@@ -103,8 +103,14 @@ UserEditor::UserEditor (AppController& a) : app (a)
 
     addAndMakeVisible (avatar);
 
-    removeAvatarButton.onClick = [this] { app.state.clearAvatar (userId); avatar.repaint(); };
+    removeAvatarButton.onClick = [this] { app.state.clearAvatar (userId); avatar.repaint(); repaint(); };
     addAndMakeVisible (removeAvatarButton);
+
+    cutoutToggle.setButtonText (txt ("Hintergrund ausblenden"));
+    cutoutToggle.setTooltip (txt ("Stellt die Person frei, damit sie auf dem Board vor den Farbstrahlen steht. "
+                                  "Am besten mit Fotos vor ruhigem Hintergrund oder PNGs mit Transparenz."));
+    cutoutToggle.onClick = [this] { commit(); repaint(); };
+    addAndMakeVisible (cutoutToggle);
 
     for (auto* ed : { &nameEditor, &roleEditor })
     {
@@ -177,6 +183,7 @@ void UserEditor::setUser (const juce::String& id)
     roleEditor.setText (u->role, false);
     thresholdSlider.setValue (u->thresholdDb, juce::dontSendNotification);
     talkbackToggle.setToggleState (u->talkbackLog, juce::dontSendNotification);
+    cutoutToggle.setToggleState (u->cutout, juce::dontSendNotification);
     refreshChannels();
     refreshRfList();
     repaint();
@@ -281,6 +288,7 @@ void UserEditor::commit()
     u.role = roleEditor.getText().trim();
     u.channel = channelBox.getSelectedId() - 2;
     u.talkbackLog = talkbackToggle.getToggleState();
+    u.cutout = cutoutToggle.getToggleState();
 
     const int rfIndex = rfBox.getSelectedId() - 2;
     if (rfIndex >= 0 && rfIndex < (int) rfRefs.size())
@@ -338,6 +346,21 @@ void UserEditor::paint (juce::Graphics& g)
     auto* u = app.state.findUser (userId);
     if (u == nullptr)
         return;
+
+    {
+        juce::String text;
+        auto colour = Theme::textFaint;
+        switch (app.state.getCutoutState (userId))
+        {
+            case AppState::CutoutState::cut:         text = txt ("✓ freigestellt"); colour = Theme::ok; break;
+            case AppState::CutoutState::notPossible: text = txt ("Hintergrund nicht erkannt – Foto bleibt, wie es ist"); colour = Theme::alert; break;
+            case AppState::CutoutState::noImage:     text = txt ("erst ein Bild wählen"); break;
+            case AppState::CutoutState::off:         break;
+        }
+        g.setColour (colour);
+        g.setFont (Theme::font (12.5f, true));
+        g.drawText (text, cutoutStatusArea, juce::Justification::centredLeft, true);
+    }
 
     // Pegel live, mit Schwelle
     if (AppState::logsTalkback (*u))
@@ -426,7 +449,13 @@ void UserEditor::resized()
     roleEditor.setBounds (top.removeFromTop (38));
 
     b.removeFromTop (6);
-    removeAvatarButton.setBounds (b.removeFromTop (28).removeFromLeft (128));
+    {
+        auto row = b.removeFromTop (28);
+        removeAvatarButton.setBounds (row.removeFromLeft (128));
+        row.removeFromLeft (24);
+        cutoutToggle.setBounds (row.removeFromLeft (220));
+        cutoutStatusArea = row;
+    }
     b.removeFromTop (14);
 
     talkbackToggle.setBounds (b.removeFromTop (26));

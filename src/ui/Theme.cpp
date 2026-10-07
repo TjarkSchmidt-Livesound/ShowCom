@@ -24,6 +24,12 @@ void drawAvatar (juce::Graphics& g, juce::Rectangle<float> b, const juce::Image&
     {
         juce::Graphics::ScopedSaveState s (g);
         g.reduceClipRegion (circle);
+
+        // Hinter freigestellten Bildern: Farbfläche der Person mit leichtem Licht
+        juce::ColourGradient bgFill (colour.brighter (0.25f).withMultipliedSaturation (0.8f), inner.getCentreX(), inner.getY() + inner.getHeight() * 0.35f,
+                                     colour.withMultipliedBrightness (0.35f), inner.getCentreX(), inner.getBottom() + inner.getHeight() * 0.3f, true);
+        g.setGradientFill (bgFill);
+        g.fillPath (circle);
         g.drawImage (image, inner, juce::RectanglePlacement::centred | juce::RectanglePlacement::fillDestination);
     }
     else

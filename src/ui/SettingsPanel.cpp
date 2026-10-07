@@ -452,7 +452,7 @@ void SettingsPanel::timerCallback()
             info << Theme::txt ("Im Browser öffnen:  ") << (urls.isEmpty() ? "http://localhost:" + juce::String (app.web.getPort())
                                                                             : urls.joinIntoString ("   ·   "));
             info << Theme::txt ("\nJedes Gerät bekommt beim ersten Aufruf eine eigene ID, eigene Oberfläche und einen eigenen Alarm-Namen. "
-                                "Im Browser lassen sich nur Personen ein- und ausblenden.");
+                                "Im Browser passt jedes Gerät sein Dashboard an (wer erscheint, Reihenfolge) – Personen anlegen und löschen nur hier.");
         }
         else
         {
