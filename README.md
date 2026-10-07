@@ -50,12 +50,12 @@ Voraussetzungen: CMake ≥ 3.22, Git. JUCE 8.0.9 und whisper.cpp 1.9.5 lädt CMa
 
 ### Windows (mit ASIO)
 
-1. **Visual Studio 2022** (Workload „Desktopentwicklung mit C++“) und **CMake** installieren.
+1. **Visual Studio 2022 oder neuer** (Workload „Desktopentwicklung mit C++“) und **CMake** installieren.
 2. **ASIO SDK** von Steinberg laden: <https://www.steinberg.net/developers/> (seit Oktober 2025 auch unter GPLv3 verfügbar) und entpacken, z. B. nach `C:\SDKs\asiosdk`. Der Ordner muss `common\iasiodrv.h` enthalten.
-3. In der „Developer PowerShell for VS 2022“:
+3. In der „Developer PowerShell for VS“:
 
 ```powershell
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DTBS_ASIO_SDK_DIR="C:\SDKs\asiosdk"
+cmake -S . -B build -A x64 -DTBS_ASIO_SDK_DIR="C:\SDKs\asiosdk"
 cmake --build build --config Release --parallel
 ```
 
