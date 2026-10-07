@@ -5,14 +5,14 @@
 /** Dunkles, blendarmes Design für den FOH-Platz (Stil: RF-Board). */
 namespace Theme
 {
-    // Farbwelt angelehnt an RF-Boards: tiefes Navy, Teal für "alles gut", Amber/Rot für Warnungen
-    const juce::Colour background   { 0xff12162b };
-    const juce::Colour panel        { 0xff1a2040 };
-    const juce::Colour panelRaised  { 0xff242b52 };
-    const juce::Colour border       { 0xff323a68 };
-    const juce::Colour text         { 0xfff1f3fa };
-    const juce::Colour textDim      { 0xff9aa3c7 };
-    const juce::Colour textFaint    { 0xff626b94 };
+    // Neutrales Dunkelgrau (blendarm am FOH), Teal für "alles gut", Amber/Rot für Warnungen
+    const juce::Colour background   { 0xff161719 };
+    const juce::Colour panel        { 0xff1f2023 };
+    const juce::Colour panelRaised  { 0xff2a2b2f };
+    const juce::Colour border       { 0xff3a3c41 };
+    const juce::Colour text         { 0xfff2f2f3 };
+    const juce::Colour textDim      { 0xffa3a5ab };
+    const juce::Colour textFaint    { 0xff6c6f76 };
     const juce::Colour accent       { 0xff35d6b4 };
     const juce::Colour record       { 0xffff4d6d };
     const juce::Colour alert        { 0xffffb020 };

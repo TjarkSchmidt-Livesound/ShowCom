@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(ShowCom VERSION 0.4.0 LANGUAGES C CXX)
+project(ShowCom VERSION 0.4.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -67,9 +67,13 @@ juce_add_gui_app(ShowCom
     PRODUCT_NAME "ShowCom"
     COMPANY_NAME "ShowCom"
     BUNDLE_ID "de.showcom.app"
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.png"
+    ICON_SMALL "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon_small.png"
     MICROPHONE_PERMISSION_ENABLED TRUE
     MICROPHONE_PERMISSION_TEXT "ShowCom nimmt die Talkback-Kanäle deines Audio-Interfaces auf und transkribiert sie lokal."
     DOCUMENT_BROWSER_ENABLED FALSE)
+
+juce_add_binary_data(ShowComAssets SOURCES resources/icon_small.png)
 
 target_sources(ShowCom PRIVATE
     src/Main.cpp
@@ -121,6 +125,7 @@ endif()
 target_link_libraries(ShowCom
     PRIVATE
         tbs_core
+        ShowComAssets
         whisper
         juce::juce_audio_utils
         juce::juce_audio_devices

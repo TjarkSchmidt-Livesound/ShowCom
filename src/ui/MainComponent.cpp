@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include <BinaryData.h>
 
 using Theme::txt;
 
@@ -498,6 +499,11 @@ void MainComponent::paint (juce::Graphics& g)
     auto h = headerArea.reduced (18, 0);
     // Logo: "SHOW" weiß, "COM" in Akzentfarbe, darunter die Funktion
     {
+        auto iconArea = h.removeFromLeft (40).withSizeKeepingCentre (38, 38).toFloat();
+        const auto icon = juce::ImageCache::getFromMemory (BinaryData::icon_small_png, BinaryData::icon_small_pngSize);
+        g.drawImage (icon, iconArea.expanded (5.0f), juce::RectanglePlacement::centred);
+        h.removeFromLeft (8);
+
         auto logo = h.removeFromLeft (120);
         auto top = logo.withTrimmedBottom (headerArea.getHeight() / 2 - 4);
         const auto big = Theme::font (19.0f, true);
@@ -539,7 +545,7 @@ void MainComponent::resized()
 
     headerArea = b.removeFromTop (64);
     auto h = headerArea.reduced (16, 12);
-    h.removeFromLeft (120);
+    h.removeFromLeft (168);   // Icon + Logo
     listenButton.setBounds (h.removeFromLeft (240));
     h.removeFromLeft (20);
 
