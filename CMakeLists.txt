@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(ShowCom VERSION 0.4.1 LANGUAGES C CXX)
+project(ShowCom VERSION 0.5.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -73,13 +73,17 @@ juce_add_gui_app(ShowCom
     MICROPHONE_PERMISSION_TEXT "ShowCom nimmt die Talkback-Kanäle deines Audio-Interfaces auf und transkribiert sie lokal."
     DOCUMENT_BROWSER_ENABLED FALSE)
 
-juce_add_binary_data(ShowComAssets SOURCES resources/icon_small.png)
+juce_add_binary_data(ShowComAssets SOURCES
+    resources/icon_small.png
+    resources/web/start.html
+    resources/web/app.html)
 
 target_sources(ShowCom PRIVATE
     src/Main.cpp
     src/AppState.cpp
     src/AppController.cpp
     src/Wireless.cpp
+    src/WebServer.cpp
     src/ui/BoardView.cpp
     src/AudioEngine.cpp
     src/Transcriber.cpp
@@ -147,10 +151,10 @@ if(TBS_BUILD_TESTS)
 
     # Integrationstest der Audio-Engine mit simuliertem Interface
     juce_add_console_app(tbs_engine_test PRODUCT_NAME "tbs_engine_test")
-    target_sources(tbs_engine_test PRIVATE tests/EngineTest.cpp src/AudioEngine.cpp src/Wireless.cpp)
+    target_sources(tbs_engine_test PRIVATE tests/EngineTest.cpp src/AudioEngine.cpp src/Wireless.cpp src/WebServer.cpp)
     target_include_directories(tbs_engine_test PRIVATE src)
     target_compile_definitions(tbs_engine_test PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_ALSA=0 JUCE_JACK=0)
-    target_link_libraries(tbs_engine_test PRIVATE tbs_core
+    target_link_libraries(tbs_engine_test PRIVATE tbs_core ShowComAssets
         juce::juce_audio_devices juce::juce_audio_formats juce::juce_gui_basics juce::juce_recommended_config_flags)
     add_test(NAME engine COMMAND tbs_engine_test)
 endif()

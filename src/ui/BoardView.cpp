@@ -75,14 +75,17 @@ BoardView::~BoardView()
 //==============================================================================
 void BoardView::transcriptEntryAdded (const TranscriptEntry& e)
 {
-    lastUtterance[e.userId] = { e.text, e.time, e.isMention() };
+    auto& d = recent[e.userId];
+    d.push_back ({ e.text, e.time, e.isMention() });
+    while (d.size() > recentLength)
+        d.pop_front();
 }
 
 void BoardView::transcriptReset()
 {
-    lastUtterance.clear();
+    recent.clear();
     for (auto& e : app.transcript.getEntries())
-        lastUtterance[e.userId] = { e.text, e.time, e.isMention() };
+        transcriptEntryAdded (e);
 }
 
 void BoardView::changeListenerCallback (juce::ChangeBroadcaster*)
@@ -219,6 +222,99 @@ void BoardView::drawPill (juce::Graphics& g, juce::Rectangle<float> area, const 
     g.drawText (text, pill, juce::Justification::centred, false);
 }
 
+void BoardView::paintCommunication (juce::Graphics& g, juce::Rectangle<float> area, const UserProfile& u, bool alerting)
+{
+    if (area.getHeight() < 30.0f)
+        return;
+
+    // Feld; leuchtet, solange ein Alarm dieser Person ansteht
+    const float pulse = 0.5f + 0.5f * std::sin ((float) juce::Time::getMillisecondCounterHiRes() * 0.008f);
+
+    if (alerting)
+    {
+        g.setColour (Theme::alert.withAlpha (0.10f + 0.18f * pulse));
+        g.fillRoundedRectangle (area.expanded (3.0f), 12.0f);
+        g.setColour (Theme::alert.withAlpha (0.55f + 0.45f * pulse));
+        g.drawRoundedRectangle (area.expanded (2.0f), 11.0f, 2.5f);
+    }
+    else
+    {
+        g.setColour (juce::Colours::black.withAlpha (0.22f));
+        g.fillRoundedRectangle (area, 10.0f);
+    }
+
+    auto inner = area.reduced (10.0f, 8.0f);
+    auto head = inner.removeFromTop (16.0f);
+    g.setFont (Theme::font (10.5f, true));
+    g.setColour (alerting ? Theme::alert : Theme::textFaint);
+    g.drawText (alerting ? txt ("● ALARM – AN DICH") : txt ("LETZTE ANSAGEN"), head, juce::Justification::centredLeft);
+    inner.removeFromTop (4.0f);
+
+    // Einträge von unten nach oben stapeln: Live-Text zuerst, dann die neuesten Ansagen
+    struct Item { juce::String text; juce::String meta; bool mention, live; };
+    std::vector<Item> items;
+
+    const auto& liveMap = app.transcript.getLive();
+    if (auto lv = liveMap.find (u.id); lv != liveMap.end())
+        items.push_back ({ lv->second.text + txt (" …"), txt ("spricht …"), lv->second.isMention(), true });
+
+    if (auto it = recent.find (u.id); it != recent.end())
+        for (auto e = it->second.rbegin(); e != it->second.rend(); ++e)
+            items.push_back ({ e->text, e->time.formatted ("%H:%M:%S"), e->mention, false });
+
+    if (items.empty())
+    {
+        g.setColour (Theme::textFaint);
+        g.setFont (Theme::font (12.0f));
+        g.drawText (txt ("Noch nichts gesagt."), inner, juce::Justification::topLeft);
+        return;
+    }
+
+    float bottom = inner.getBottom();
+    const float width = inner.getWidth() - 8.0f;
+
+    for (auto& item : items)
+    {
+        juce::AttributedString as;
+        as.setWordWrap (juce::AttributedString::byWord);
+        as.append (item.text, Theme::font (13.0f, item.mention),
+                   item.live ? Theme::textDim : item.mention ? Theme::alert.brighter (0.3f) : Theme::text.withAlpha (0.9f));
+        juce::TextLayout tl;
+        tl.createLayout (as, width);
+
+        const float h = 14.0f + tl.getHeight() + 6.0f;
+        if (bottom - h < inner.getY())
+        {
+            // Passt nicht mehr ganz: oberste Zeile abschneiden statt weglassen, wenn es die erste ist
+            if (&item != &items.front())
+                break;
+        }
+
+        auto box = juce::Rectangle<float> (inner.getX(), bottom - h, inner.getWidth(), h);
+        bottom -= h;
+
+        if (item.mention)
+        {
+            g.setColour (Theme::alert);
+            g.fillRoundedRectangle (box.getX() - 6.0f, box.getY() + 2.0f, 3.0f, box.getHeight() - 6.0f, 1.5f);
+        }
+
+        g.setFont (Theme::font (10.0f, true));
+        g.setColour (item.live ? u.colour.brighter (0.4f) : item.mention ? Theme::alert : Theme::textFaint);
+        g.drawText (item.meta + (item.mention && ! item.live ? txt ("  ·  ERWÄHNT") : juce::String()),
+                    box.withHeight (14.0f), juce::Justification::centredLeft);
+
+        {
+            juce::Graphics::ScopedSaveState ss (g);
+            g.reduceClipRegion (inner.toNearestInt());
+            tl.draw (g, box.withTrimmedTop (14.0f).withWidth (width));
+        }
+
+        if (bottom < inner.getY())
+            break;
+    }
+}
+
 void BoardView::paintCard (juce::Graphics& g, juce::Rectangle<float> r, const UserProfile& u, int index)
 {
     const auto rf = app.getRfInfo (u);
@@ -248,8 +344,15 @@ void BoardView::paintCard (juce::Graphics& g, juce::Rectangle<float> r, const Us
     auto footer = inner.removeFromBottom (footerH);
     auto graph = inner.removeFromBottom (graphH).expanded (14.0f, 0.0f);
     auto badges = inner.removeFromBottom (28.0f);
-    auto lastArea = inner.removeFromBottom (juce::jmin (78.0f, inner.getHeight() * 0.3f));
-    auto photo = juce::Rectangle<float> (r.getX(), header.getBottom() - 10.0f, r.getWidth(), lastArea.getY() - header.getBottom() + 10.0f);
+
+    // Talkback-Person: Foto im oberen Drittel, darunter die Kommunikation.
+    // Nur-Funk-Person (Redner, Band): großes Foto über die ganze Höhe.
+    const bool talkbackCard = u.talkbackLog;
+    const float photoBottom = talkbackCard ? juce::jmax (header.getBottom() + 80.0f, r.getY() + r.getHeight() / 3.0f + 10.0f)
+                                           : inner.getBottom();
+    auto lastArea = talkbackCard ? inner.withTop (photoBottom + 6.0f).withTrimmedBottom (4.0f)
+                                 : inner.withTop (inner.getBottom()).withHeight (0.0f);
+    auto photo = juce::Rectangle<float> (r.getX(), header.getBottom() - 10.0f, r.getWidth(), photoBottom - header.getBottom() + 10.0f);
 
     juce::Path cardPath;
     cardPath.addRoundedRectangle (r, cardRadius);
@@ -306,13 +409,13 @@ void BoardView::paintCard (juce::Graphics& g, juce::Rectangle<float> r, const Us
         }
 
         // Unterer Bereich abdunkeln, Foto weich auslaufen lassen
-        const float fadeTop = lastArea.getY() - 70.0f;
+        const float fadeTop = photo.getBottom() - 70.0f;
         juce::ColourGradient fade (Theme::panel.withAlpha (0.0f), r.getX(), fadeTop,
-                                   Theme::panel.withAlpha (0.96f), r.getX(), lastArea.getY() + 6.0f, false);
+                                   Theme::panel.withAlpha (0.96f), r.getX(), photo.getBottom() + 6.0f, false);
         g.setGradientFill (fade);
-        g.fillRect (r.withTop (fadeTop).withBottom (lastArea.getY() + 6.0f));
+        g.fillRect (r.withTop (fadeTop).withBottom (photo.getBottom() + 6.0f));
         g.setColour (Theme::panel.withAlpha (0.96f));
-        g.fillRect (r.withTop (lastArea.getY() + 6.0f));
+        g.fillRect (r.withTop (photo.getBottom() + 6.0f));
 
         // --- Graph: HF-Signal (Fläche) + Talkback-Pegel (weiße Linie) -----
         auto plot = graph.reduced (0.0f, 6.0f);
@@ -392,31 +495,11 @@ void BoardView::paintCard (juce::Graphics& g, juce::Rectangle<float> r, const Us
         g.drawText (sub.toUpperCase(), h, juce::Justification::topLeft, true);
     }
 
-    // --- Live-Text (spricht gerade) oder letzte Ansage -------------------------
-    const auto& liveMap = app.transcript.getLive();
-    if (auto lv = liveMap.find (u.id); lv != liveMap.end())
+    // --- Kommunikation (nur Talkback-Personen) -------------------------------
+    if (talkbackCard)
     {
-        auto la = lastArea.reduced (0.0f, 4.0f);
-        g.setColour (lv->second.isMention() ? Theme::alert : u.colour.brighter (0.4f));
-        g.setFont (Theme::font (11.0f, true));
-        g.drawText (lv->second.isMention() ? txt ("ERWÄHNT  ·  SPRICHT …") : txt ("SPRICHT …"),
-                    la.removeFromTop (16.0f), juce::Justification::centredLeft);
-
-        g.setColour (Theme::text.withAlpha (0.75f));
-        g.setFont (Theme::font (14.0f));
-        g.drawFittedText (lv->second.text + txt (" …"), la.toNearestInt(), juce::Justification::topLeft, 3, 1.0f);
-    }
-    else if (auto it = lastUtterance.find (u.id); it != lastUtterance.end())
-    {
-        auto la = lastArea.reduced (0.0f, 4.0f);
-        g.setColour (it->second.mention ? Theme::alert : Theme::textFaint);
-        g.setFont (Theme::font (11.0f, true));
-        g.drawText ((it->second.mention ? txt ("ERWÄHNT  ·  ") : juce::String()) + it->second.time.formatted ("%H:%M:%S"),
-                    la.removeFromTop (16.0f), juce::Justification::centredLeft);
-
-        g.setColour (Theme::text.withAlpha (0.92f));
-        g.setFont (Theme::font (14.0f));
-        g.drawFittedText (txt ("„") + it->second.text + txt ("“"), la.toNearestInt(), juce::Justification::topLeft, 3, 1.0f);
+        const bool alerting = getAlertUserId != nullptr && getAlertUserId() == u.id;
+        paintCommunication (g, lastArea, u, alerting);
     }
 
     // --- Hinweise -----------------------------------------------------------

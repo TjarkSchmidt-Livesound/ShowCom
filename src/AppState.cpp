@@ -67,6 +67,8 @@ void AppState::load()
             settings.useGpu           = flag ("useGpu", true);
             settings.recognitionMode  = s->hasProperty ("recognitionMode") ? juce::jlimit (0, 2, (int) s->getProperty ("recognitionMode")) : 2;
             settings.vocabulary       = str ("vocabulary", {});
+            settings.webEnabled       = flag ("webEnabled", true);
+            settings.webPort          = s->hasProperty ("webPort") ? juce::jlimit (1024, 65535, (int) s->getProperty ("webPort")) : 8080;
             settings.liveText         = flag ("liveText", true);
         }
 
@@ -103,6 +105,7 @@ void AppState::load()
                 u.avatarFile  = v["avatar"].toString();
                 u.channel     = v.hasProperty ("channel") ? (int) v["channel"] : -1;
                 u.thresholdDb = v.hasProperty ("thresholdDb") ? (float) (double) v["thresholdDb"] : -45.0f;
+                u.talkbackLog = v.hasProperty ("talkback") ? (bool) v["talkback"] : true;
                 u.rfDeviceId  = v["rfDevice"].toString();
                 u.rfChannel   = v.hasProperty ("rfChannel") ? (int) v["rfChannel"] : 0;
                 u.colour      = v.hasProperty ("colour") ? juce::Colour::fromString (v["colour"].toString())
@@ -132,6 +135,8 @@ void AppState::save() const
     s->setProperty ("useGpu",           settings.useGpu);
     s->setProperty ("recognitionMode",  settings.recognitionMode);
     s->setProperty ("vocabulary",       settings.vocabulary);
+    s->setProperty ("webEnabled",       settings.webEnabled);
+    s->setProperty ("webPort",          settings.webPort);
     s->setProperty ("liveText",         settings.liveText);
 
     juce::Array<juce::var> arr;
@@ -146,6 +151,7 @@ void AppState::save() const
         o->setProperty ("channel",     u.channel);
         o->setProperty ("thresholdDb", u.thresholdDb);
         o->setProperty ("colour",      u.colour.toString());
+        o->setProperty ("talkback",    u.talkbackLog);
         o->setProperty ("rfDevice",    u.rfDeviceId);
         o->setProperty ("rfChannel",   u.rfChannel);
         arr.add (juce::var (o));

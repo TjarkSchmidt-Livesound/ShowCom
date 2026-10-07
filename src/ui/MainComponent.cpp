@@ -180,6 +180,8 @@ MainComponent::MainComponent (AppController& a) : app (a)
     tabs.addTab ("Einstellungen", Theme::panel, &settingsPanel, false);
     addAndMakeVisible (tabs);
 
+    board.getAlertUserId = [this] { return banner.getUserId(); };
+
     board.onOpenUser = [this] (const juce::String& id)
     {
         for (auto& t : userTabs)
@@ -232,7 +234,12 @@ int MainComponent::indexOfTab (juce::Component* c) const
 //==============================================================================
 void MainComponent::syncUserTabs()
 {
-    const auto& users = app.state.getUsers();
+    // Eigene Tabs nur für Personen, deren Talkback mitgeloggt wird
+    std::vector<UserProfile> users;
+    for (auto& u : app.state.getUsers())
+        if (u.talkbackLog)
+            users.push_back (u);
+
     const int firstUserTab = 3;   // Board, Konversation, Erwähnungen
 
     bool sameOrder = users.size() == userTabs.size();
@@ -355,10 +362,11 @@ void MainComponent::updateSetupBar()
     const auto inputs = app.engine.getInputChannelNames();
     const auto modelState = app.transcriber.getModelState();
 
-    bool anyAssigned = false, anySignal = false;
+    bool anyAssigned = false, anySignal = false, anyTalkbackUser = false;
     for (auto& u : app.state.getUsers())
     {
-        if (u.channel >= 0 && u.channel < inputs.size())
+        anyTalkbackUser = anyTalkbackUser || u.talkbackLog;
+        if (AppState::logsTalkback (u) && u.channel < inputs.size())
         {
             anyAssigned = true;
             if (app.engine.getLevelDb (u.channel) > -100.0f)
@@ -388,7 +396,7 @@ void MainComponent::updateSetupBar()
         msg = txt ("Spracherkennungs-Modell wird geladen …");
         critical = false;
     }
-    else if (! anyAssigned)
+    else if (! anyAssigned && anyTalkbackUser)
     {
         msg = txt ("Noch keiner Person ist ein Eingang zugewiesen. Transkribiert werden nur Eingänge, die einer Person gehören "
                    "(z. B. Eingang 1 = eingebautes Mikrofon).");
@@ -524,6 +532,8 @@ void MainComponent::paint (juce::Graphics& g)
     auto p = presenceArea;
     for (auto& u : app.state.getUsers())
     {
+        if (! u.talkbackLog)
+            continue;
         if (p.getWidth() < 40)
             break;
 
@@ -549,7 +559,9 @@ void MainComponent::resized()
     listenButton.setBounds (h.removeFromLeft (240));
     h.removeFromLeft (20);
 
-    const int presenceWidth = juce::jmin (h.getWidth() / 2, (int) app.state.getUsers().size() * 44);
+    const auto& allUsers = app.state.getUsers();
+    const int talkbackUsers = (int) std::count_if (allUsers.begin(), allUsers.end(), [] (const UserProfile& u) { return u.talkbackLog; });
+    const int presenceWidth = juce::jmin (h.getWidth() / 2, talkbackUsers * 44);
     presenceArea = h.removeFromLeft (presenceWidth);
     h.removeFromLeft (12);
     statusLabel.setBounds (h);

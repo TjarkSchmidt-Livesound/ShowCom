@@ -70,10 +70,16 @@ AppController::AppController()
 
     // Von Anfang an zuhören: Es soll nichts verloren gehen, auch wenn niemand auf "Start" drückt.
     setListening (true);
+
+    web.setDevicesFile (AppState::getAppDataDir().getChildFile ("web_devices.json"));
+    web.configure (state.getSettings().webEnabled, state.getSettings().webPort);
+    startTimerHz (4);
 }
 
 AppController::~AppController()
 {
+    stopTimer();
+    web.configure (false, 0);
     engine.setListening (false);
     state.removeChangeListener (this);
     engine.getDeviceManager().removeChangeListener (this);
@@ -145,8 +151,8 @@ void AppController::applyState()
     std::vector<AudioEngine::Assignment> assignments;
     for (auto& u : state.getUsers())
     {
-        if (u.channel < 0)
-            continue;
+        if (! AppState::logsTalkback (u))
+            continue;   // nur Funküberwachung: kein Audio
 
         AudioEngine::Assignment a;
         a.userId = u.id;
@@ -156,6 +162,7 @@ void AppController::applyState()
     }
     engine.setAssignments (assignments);
     wireless.setDevices (s.wirelessDevices);
+    web.configure (s.webEnabled, s.webPort);
     engine.setLiveInterval (s.liveText ? 0.8f : 0.0f);
 
     Transcriber::Options o;
@@ -211,6 +218,76 @@ void AppController::injectTestMention()
     transcript.add (std::move (e));
 }
 
+void AppController::timerCallback()
+{
+    if (! web.isRunning())
+        return;
+
+    auto snap = std::make_shared<WebServer::Snapshot>();
+    snap->listening = engine.isListening();
+
+    for (auto& u : state.getUsers())
+    {
+        WebServer::Person p;
+        p.id = u.id;
+        p.name = u.name;
+        p.role = u.role;
+        p.colour = "#" + u.colour.toDisplayString (false).toLowerCase();
+        p.talkback = u.talkbackLog;
+        p.speaking = AppState::logsTalkback (u) && engine.isSpeaking (u.channel);
+
+        const auto rf = getRfInfo (u);
+        p.rfAssigned = rf.assigned;
+        p.rfOnline = rf.online;
+        p.rfKnown = rf.known;
+        p.rf = rf.state;
+        if (rf.history != nullptr)
+        {
+            const int n = juce::jmin ((int) rf.history->size(), 120);   // 30 s
+            p.history.assign (rf.history->end() - n, rf.history->end());
+        }
+
+        // Avatar als PNG, nur neu kodieren, wenn sich das Bild geändert hat
+        if (u.avatarFile.isNotEmpty())
+        {
+            auto& cached = webAvatarCache[u.id];
+            if (cached.first != u.avatarFile || cached.second == nullptr)
+            {
+                auto block = std::make_shared<juce::MemoryBlock>();
+                juce::MemoryOutputStream out (*block, false);
+                juce::PNGImageFormat png;
+                const auto img = state.getAvatar (u.id);
+                if (img.isValid() && png.writeImageToStream (img, out))
+                {
+                    out.flush();
+                    cached = { u.avatarFile, block };
+                }
+            }
+
+            if (cached.second != nullptr)
+            {
+                p.avatarKey = juce::String (u.avatarFile.hashCode64());
+                snap->avatars[u.id] = cached.second;
+            }
+        }
+
+        snap->persons.push_back (std::move (p));
+    }
+
+    const auto& entries = transcript.getEntries();
+    const size_t first = entries.size() > 80 ? entries.size() - 80 : 0;
+    for (size_t i = first; i < entries.size(); ++i)
+    {
+        const auto& e = entries[i];
+        snap->entries.push_back ({ e.id, e.userId, e.time.formatted ("%H:%M:%S"), e.text, e.utteranceId });
+    }
+
+    for (auto& [uid, e] : transcript.getLive())
+        snap->live.push_back ({ 0, uid, e.time.formatted ("%H:%M:%S"), e.text, e.utteranceId });
+
+    web.publish (std::move (snap));
+}
+
 AppController::RfInfo AppController::getRfInfo (const UserProfile& u) const
 {
     RfInfo info;
@@ -222,7 +299,7 @@ AppController::RfInfo AppController::getRfInfo (const UserProfile& u) const
         const auto& users = state.getUsers();
         for (size_t i = 0; i < users.size(); ++i)
             if (users[i].id == u.id)
-                channel = (int) (i % 6) + 1;
+                channel = (int) (i % 8) + 1;
 
         deviceId = WirelessManager::demoDeviceId;
     }
@@ -245,7 +322,10 @@ void AppController::injectDemoConversation()
     wireless.setDemoDevice (true);
     applyState();
 
-    const auto& users = state.getUsers();
+    std::vector<UserProfile> users;
+    for (auto& u : state.getUsers())
+        if (u.talkbackLog)
+            users.push_back (u);
     if (users.empty())
         return;
 

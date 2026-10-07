@@ -26,6 +26,7 @@ struct UserProfile
     juce::Colour colour;
     int channel = -1;           // Index des Eingangs am Audio-Interface (0-basiert), -1 = keiner
     float thresholdDb = -45.0f; // Sprach-Schwelle (RMS, dBFS)
+    bool talkbackLog = true;    // Talkback dieser Person mitloggen; aus = nur Funküberwachung (Redner, Band)
     juce::String rfDeviceId;    // zugewiesene Funkstrecke (leer = keine)
     int rfChannel = 0;          // Empfängerkanal 1..4
 };
@@ -40,6 +41,8 @@ struct AppSettings
     bool useGpu = true;
     int recognitionMode = 2;            // 0 = schnell, 1 = ausgewogen, 2 = genau
     juce::String vocabulary;            // eigene Begriffe: Bandname, Songs, Fachwörter
+    bool webEnabled = true;             // Browser-Zugriff im lokalen Netz
+    int webPort = 8080;
     bool liveText = true;               // Zwischenstände schon während des Sprechens
     juce::String audioDeviceState;      // XML von AudioDeviceManager
     std::vector<WirelessDeviceConfig> wirelessDevices;
@@ -69,6 +72,9 @@ public:
     void updateUser (const UserProfile& user);
     void removeUser (const juce::String& id);
     void moveUser (const juce::String& id, int delta);
+
+    /** Personen, deren Talkback transkribiert wird (Talkback an + Eingang zugewiesen). */
+    static bool logsTalkback (const UserProfile& u)          { return u.talkbackLog && u.channel >= 0; }
 
     /** Liefert den Benutzer, dem ein Eingang zugewiesen ist (oder nullptr). */
     const UserProfile* findUserForChannel (int channel, const juce::String& excludeId = {}) const;

@@ -330,10 +330,10 @@ SimulatedClient::~SimulatedClient()
 void SimulatedClient::run()
 {
     juce::Random rnd (42);
-    const char* names[] = { "HH01", "BP02", "BP03", "HH04", "BP05", "HH06" };
-    const int freqs[]   = { 470125, 471300, 472475, 473650, 474825, 476000 };
-    const float batt[]  = { 96.0f, 78.0f, 64.0f, 31.0f, 100.0f, 12.0f };
-    float rf[]          = { -47.0f, -51.0f, -55.0f, -60.0f, -49.0f, -66.0f };
+    const char* names[] = { "HH01", "BP02", "BP03", "HH04", "BP05", "HH06", "HH07", "BP08" };
+    const int freqs[]   = { 470125, 471300, 472475, 473650, 474825, 476000, 477175, 478350 };
+    const float batt[]  = { 96.0f, 78.0f, 64.0f, 31.0f, 100.0f, 12.0f, 88.0f, 71.0f };
+    float rf[]          = { -47.0f, -51.0f, -55.0f, -60.0f, -49.0f, -66.0f, -52.0f, -54.0f };
     const juce::int64 start = nowMs();
 
     setModel ("Demo");
@@ -343,7 +343,7 @@ void SimulatedClient::run()
     {
         const double minutes = (double) (nowMs() - start) / 60000.0;
 
-        for (int i = 0; i < 6; ++i)
+        for (int i = 0; i < 8; ++i)
         {
             WirelessChannelState s;
             s.name = names[i];
@@ -404,7 +404,7 @@ int WirelessManager::defaultChannelCount (const WirelessDeviceConfig& c)
     if (c.numChannels > 0)
         return c.numChannels;
 
-    return c.type == WirelessDeviceConfig::Type::simulated ? 6 : 4;
+    return c.type == WirelessDeviceConfig::Type::simulated ? 8 : 4;
 }
 
 std::unique_ptr<WirelessClient> WirelessManager::createClient (const WirelessDeviceConfig& c)

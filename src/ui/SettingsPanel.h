@@ -57,6 +57,27 @@ private:
 };
 
 //==============================================================================
+/** Ein Browser-Gerät in der Liste am Host: Name, Alarm-Name, zuletzt gesehen, entfernen. */
+class WebDeviceRow : public juce::Component
+{
+public:
+    explicit WebDeviceRow (const WebServer::Device& d) : device (d)
+    {
+        removeButton.onClick = [this] { if (onRemove) onRemove(); };
+        addAndMakeVisible (removeButton);
+    }
+
+    WebServer::Device device;
+    std::function<void()> onRemove;
+
+    void paint (juce::Graphics&) override;
+    void resized() override   { removeButton.setBounds (getLocalBounds().reduced (8, 6).removeFromRight (100)); }
+
+private:
+    juce::TextButton removeButton { "Entfernen" };
+};
+
+//==============================================================================
 class SettingsPanel : public juce::Component,
                       private juce::Timer
 {
@@ -99,6 +120,14 @@ private:
     juce::Label wirelessHint;
     juce::OwnedArray<WirelessRow> wirelessRows;
     juce::TextButton addWirelessButton { txtInit ("+ Empfänger hinzufügen") };
+
+    // Webzugriff
+    void rebuildWebRows();
+    juce::ToggleButton webToggle { "Browser-Zugriff im lokalen Netz (Handy, Tablet, Laptop)" };
+    juce::Label webPortLabel { {}, "Port" }, webInfo;
+    juce::TextEditor webPortEditor;
+    juce::OwnedArray<WebDeviceRow> webRows;
+    juce::String webRowsKey;
 
     // Transkription
     juce::Label modelLabel, modelStatus;

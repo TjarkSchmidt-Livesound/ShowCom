@@ -21,6 +21,9 @@ public:
 
     std::function<void (const juce::String& userId)> onOpenUser;
 
+    /** Liefert die Person, deren Alarm gerade ansteht (leer = keiner). Ihr Kommunikationsfeld leuchtet. */
+    std::function<juce::String()> getAlertUserId;
+
     void paint (juce::Graphics&) override;
     void resized() override;
 
@@ -43,6 +46,7 @@ private:
     void layoutCards();
     void paintCard (juce::Graphics&, juce::Rectangle<float>, const UserProfile&, int index);
     static void drawBattery (juce::Graphics&, juce::Rectangle<float>, int percent, bool known);
+    void paintCommunication (juce::Graphics&, juce::Rectangle<float>, const UserProfile&, bool alerting);
     static void drawPill (juce::Graphics&, juce::Rectangle<float> centreArea, const juce::String& text, juce::Colour bg, juce::Colour fg);
 
     AppController& app;
@@ -51,7 +55,8 @@ private:
     std::vector<juce::Rectangle<float>> cardRects;
 
     struct Last { juce::String text; juce::Time time; bool mention = false; };
-    std::map<juce::String, Last> lastUtterance;
+    std::map<juce::String, std::deque<Last>> recent;   // letzte Ansagen pro Person
+    static constexpr size_t recentLength = 8;
     std::map<juce::String, std::deque<float>> talkbackHistory;
     int tick = 0;
 

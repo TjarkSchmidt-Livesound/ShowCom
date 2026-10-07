@@ -5,6 +5,7 @@
 #include "Transcriber.h"
 #include "TranscriptModel.h"
 #include "Wireless.h"
+#include "WebServer.h"
 
 /**
     Hält die Kernobjekte zusammen und verdrahtet sie:
@@ -14,7 +15,8 @@
     Reihenfolge der Member ist wichtig: engine wird zuerst zerstört (stoppt Audio),
     dann transcriber, dann transcript und state.
 */
-class AppController : private juce::ChangeListener
+class AppController : private juce::ChangeListener,
+                      private juce::Timer
 {
 public:
     AppController();
@@ -23,6 +25,7 @@ public:
     AppState state;
     TranscriptModel transcript;
     WirelessManager wireless;
+    WebServer web;
     Transcriber transcriber;
     AudioEngine engine;
 
@@ -51,6 +54,8 @@ public:
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
+    void timerCallback() override;   // Momentaufnahme für den Webserver
+    std::map<juce::String, std::pair<juce::String, std::shared_ptr<juce::MemoryBlock>>> webAvatarCache;
     void applyState();
     juce::String buildPrompt() const;
 

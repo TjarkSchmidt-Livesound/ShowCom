@@ -3,6 +3,7 @@
 
 #include "AudioEngine.h"
 #include "Wireless.h"
+#include "WebServer.h"
 #include <cstdio>
 #include <cstring>
 
@@ -268,10 +269,100 @@ namespace
     }
 }
 
+namespace
+{
+    juce::String httpRequest (int port, const juce::String& method, const juce::String& path, const juce::String& body, int& status)
+    {
+        juce::StreamingSocket s;
+        status = 0;
+        if (! s.connect ("127.0.0.1", port, 2000))
+            return {};
+
+        juce::String req;
+        req << method << " " << path << " HTTP/1.1\r\nHost: localhost\r\nContent-Length: "
+            << (int) body.getNumBytesAsUTF8() << "\r\nConnection: close\r\n\r\n" << body;
+        s.write (req.toRawUTF8(), (int) req.getNumBytesAsUTF8());
+
+        juce::MemoryBlock data;
+        char buf[4096];
+        while (s.waitUntilReady (true, 2000) > 0)
+        {
+            const int n = s.read (buf, sizeof (buf), false);
+            if (n <= 0) break;
+            data.append (buf, (size_t) n);
+        }
+
+        const auto text = juce::String::fromUTF8 ((const char*) data.getData(), (int) data.getSize());
+        status = text.fromFirstOccurrenceOf (" ", false, false).getIntValue();
+        return text.fromFirstOccurrenceOf ("\r\n\r\n", false, false);
+    }
+
+    void testWeb()
+    {
+        const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("showcom_web_test.json");
+        file.deleteFile();
+
+        WebServer web;
+        web.setDevicesFile (file);
+
+        auto snap = std::make_shared<WebServer::Snapshot>();
+        snap->listening = true;
+        WebServer::Person a; a.id = "u1"; a.name = "Anna"; a.colour = "#ba68c8"; a.talkback = true;
+        WebServer::Person b; b.id = "u2"; b.name = "Mia";  b.colour = "#9575cd"; b.talkback = false;
+        b.rfAssigned = b.rfOnline = b.rfKnown = true; b.rf.txOn = true; b.rf.batteryPercent = 64; b.rf.frequencyKHz = 470125;
+        snap->persons = { a, b };
+        snap->entries.push_back ({ 1, "u1", "20:01:02", juce::String::fromUTF8 ("Jürgen, kommst du mal zur Bühne?"), 3 });
+        snap->entries.push_back ({ 2, "u1", "20:01:09", "Alles gut.", 4 });
+        web.publish (snap);
+
+        web.configure (true, 18765);
+        check (web.isRunning(), "Web: Server läuft");
+
+        int st = 0;
+        auto page = httpRequest (18765, "GET", "/", {}, st);
+        check (st == 200 && page.contains ("api/register"), "Web: Startseite");
+
+        auto reg = juce::JSON::parse (httpRequest (18765, "POST", "/api/register", {}, st));
+        const auto id = reg["id"].toString();
+        check (st == 200 && id.length() == 6, "Web: Gerät registriert, eigene ID");
+
+        httpRequest (18765, "GET", "/d/" + id, {}, st);
+        check (st == 200, "Web: Geräte-Oberfläche erreichbar");
+
+        httpRequest (18765, "POST", "/api/d/" + id + "/settings", R"({"keywords":"Juergen"})", st);
+        auto state = juce::JSON::parse (httpRequest (18765, "GET", "/api/d/" + id + "/state", {}, st));
+        check (st == 200 && state["persons"].size() == 2, "Web: Zustand mit Personen");
+        check ((bool) state["entries"][0]["mention"] && ! (bool) state["entries"][1]["mention"],
+               "Web: eigener Alarm-Name des Geräts wird erkannt (Umlaut-Faltung)");
+        check ((int) state["persons"][1]["rf"]["battery"] == 64 && ! (bool) state["persons"][1]["talkback"], "Web: Funkdaten und nur-Funk-Person");
+
+        httpRequest (18765, "POST", "/api/d/" + id + "/visibility", R"({"user":"u2","visible":false})", st);
+        state = juce::JSON::parse (httpRequest (18765, "GET", "/api/d/" + id + "/state", {}, st));
+        check (! (bool) state["persons"][1]["visible"] && (bool) state["persons"][0]["visible"], "Web: Person pro Gerät ausblenden");
+
+        // Ein zweites Gerät hat seine eigene Sicht
+        const auto id2 = juce::JSON::parse (httpRequest (18765, "POST", "/api/register", {}, st))["id"].toString();
+        auto state2 = juce::JSON::parse (httpRequest (18765, "GET", "/api/d/" + id2 + "/state", {}, st));
+        check (id2 != id && (bool) state2["persons"][1]["visible"] && ! (bool) state2["entries"][0]["mention"],
+               "Web: zweites Gerät unabhängig (eigene Sichtbarkeit, kein Alarm-Name)");
+
+        web.removeDevice (id2);
+        httpRequest (18765, "GET", "/api/d/" + id2 + "/state", {}, st);
+        check (st == 404, "Web: am Host entferntes Gerät hat keinen Zugriff mehr");
+
+        check (file.loadFileAsString().contains (id) && ! file.loadFileAsString().contains (id2), "Web: Geräte werden gespeichert");
+
+        web.configure (false, 0);
+        check (! web.isRunning(), "Web: Server gestoppt");
+        file.deleteFile();
+    }
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI init;
 
+    testWeb();
     testWireless();
 
     AudioEngine engine;

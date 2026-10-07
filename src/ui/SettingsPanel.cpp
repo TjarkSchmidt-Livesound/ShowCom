@@ -168,6 +168,33 @@ void WirelessRow::resized()
 }
 
 //==============================================================================
+void WebDeviceRow::paint (juce::Graphics& g)
+{
+    g.setColour (Theme::background.withAlpha (0.5f));
+    g.fillRoundedRectangle (getLocalBounds().toFloat(), 8.0f);
+
+    const bool recent = juce::Time::currentTimeMillis() - device.lastSeenMs < 10000;
+    g.setColour (recent ? Theme::ok : Theme::textFaint);
+    g.fillEllipse (juce::Rectangle<float> (10.0f, 10.0f).withCentre ({ 16.0f, (float) getHeight() / 2.0f }));
+
+    auto b = getLocalBounds().reduced (30, 6).withTrimmedRight (110);
+    g.setColour (Theme::text);
+    g.setFont (Theme::font (14.0f, true));
+    g.drawText (device.label + "   (" + device.id + ")", b.removeFromTop (b.getHeight() / 2), juce::Justification::bottomLeft, true);
+
+    juce::String info;
+    info << Theme::txt ("Alarm-Name: ") << (device.keywords.isNotEmpty() ? device.keywords : Theme::txt ("– nicht gesetzt –"))
+         << Theme::txt ("   ·   ")
+         << (recent ? Theme::txt ("verbunden") : Theme::txt ("zuletzt ") + juce::Time (device.lastSeenMs).formatted ("%d.%m. %H:%M"));
+    if (! device.hidden.empty())
+        info << Theme::txt ("   ·   ") << (int) device.hidden.size() << " ausgeblendet";
+
+    g.setColour (Theme::textDim);
+    g.setFont (Theme::font (12.0f));
+    g.drawText (info, b, juce::Justification::topLeft, true);
+}
+
+//==============================================================================
 SettingsPanel::SettingsPanel (AppController& a)
     : app (a),
       deviceSelector (a.engine.getDeviceManager(), 0, AudioEngine::maxChannels, 0, 0, false, false, false, false)
@@ -199,6 +226,28 @@ SettingsPanel::SettingsPanel (AppController& a)
                            ), juce::dontSendNotification);
     styleHint (audioHint);
     content.addAndMakeVisible (audioHint);
+
+    // --- Webzugriff -----------------------------------------------------------
+    webToggle.onClick = [this] { store ([v = webToggle.getToggleState()] (AppSettings& s) { s.webEnabled = v; }); };
+    content.addAndMakeVisible (webToggle);
+
+    webPortLabel.setFont (Theme::font (13.0f, true));
+    webPortLabel.setColour (juce::Label::textColourId, Theme::textDim);
+    content.addAndMakeVisible (webPortLabel);
+
+    webPortEditor.setInputRestrictions (5, "0123456789");
+    webPortEditor.setIndents (8, 7);
+    webPortEditor.onReturnKey = [this] { webPortEditor.unfocusAllComponents(); };
+    webPortEditor.onFocusLost = [this]
+    {
+        const int port = juce::jlimit (1024, 65535, webPortEditor.getText().getIntValue());
+        store ([port] (AppSettings& s) { s.webPort = port; });
+    };
+    content.addAndMakeVisible (webPortEditor);
+
+    webInfo.setFont (Theme::font (14.0f));
+    webInfo.setJustificationType (juce::Justification::topLeft);
+    content.addAndMakeVisible (webInfo);
 
     // --- Funkempfänger ------------------------------------------------------
     wirelessHint.setText (txt ("Empfänger im selben Netzwerk wie dieser Rechner. Shure: Steuerung über TCP-Port 2202 "
@@ -360,6 +409,10 @@ void SettingsPanel::loadFromState()
 
     if ((int) s.wirelessDevices.size() != wirelessRows.size())
         rebuildWirelessRows();
+
+    webToggle.setToggleState (s.webEnabled, juce::dontSendNotification);
+    if (! webPortEditor.hasKeyboardFocus (true))
+        webPortEditor.setText (juce::String (s.webPort), false);
 }
 
 void SettingsPanel::store (const std::function<void (AppSettings&)>& change)
@@ -390,6 +443,46 @@ void SettingsPanel::timerCallback()
 
     downloader.syncProgress();
 
+    // Webzugriff: Adressen und Geräte
+    {
+        juce::String info;
+        if (app.web.isRunning())
+        {
+            const auto urls = app.web.getUrls();
+            info << Theme::txt ("Im Browser öffnen:  ") << (urls.isEmpty() ? "http://localhost:" + juce::String (app.web.getPort())
+                                                                            : urls.joinIntoString ("   ·   "));
+            info << Theme::txt ("\nJedes Gerät bekommt beim ersten Aufruf eine eigene ID, eigene Oberfläche und einen eigenen Alarm-Namen. "
+                                "Im Browser lassen sich nur Personen ein- und ausblenden.");
+        }
+        else
+        {
+            info = app.state.getSettings().webEnabled ? app.web.getStatusText() : Theme::txt ("Browser-Zugriff ist ausgeschaltet.");
+        }
+
+        if (webInfo.getText() != info)
+            webInfo.setText (info, juce::dontSendNotification);
+        webInfo.setColour (juce::Label::textColourId, app.web.isRunning() ? Theme::text : Theme::alert);
+
+        juce::String key;
+        const auto devices = app.web.getDevices();
+        for (auto& d : devices)
+            key << d.id << d.label << d.keywords << (int) d.hidden.size() << ";";
+
+        if (key != webRowsKey)
+        {
+            webRowsKey = key;
+            rebuildWebRows();
+        }
+        else
+        {
+            for (size_t i = 0; i < devices.size() && i < (size_t) webRows.size(); ++i)
+            {
+                webRows[(int) i]->device = devices[i];
+                webRows[(int) i]->repaint();
+            }
+        }
+    }
+
     for (auto* row : wirelessRows)
         row->setStatus (app.wireless.getStatus (row->config.id));
 
@@ -400,6 +493,32 @@ void SettingsPanel::timerCallback()
         status << txt ("  ·  letzte Rechenzeit: ") << juce::String (app.transcriber.getLastRealtimeFactor() * 100.0, 0)
                << txt (" % der Sprechdauer");
     modelStatus.setText (status, juce::dontSendNotification);
+}
+
+void SettingsPanel::rebuildWebRows()
+{
+    webRows.clear();
+
+    for (auto& d : app.web.getDevices())
+    {
+        auto* row = webRows.add (new WebDeviceRow (d));
+        const auto id = d.id;
+        row->onRemove = [this, id]
+        {
+            juce::Component::SafePointer<SettingsPanel> self (this);
+            juce::MessageManager::callAsync ([self, id]
+            {
+                if (self != nullptr)
+                {
+                    self->app.web.removeDevice (id);
+                    self->timerCallback();
+                }
+            });
+        };
+        content.addAndMakeVisible (row);
+    }
+
+    content.resized();
 }
 
 void SettingsPanel::rebuildWirelessRows()
@@ -524,6 +643,18 @@ void SettingsPanel::Content::resized()
     o.deviceSelector.setBounds (row (330).withTrimmedLeft (-10));
     y = o.deviceSelector.getBottom() + 10;
     o.audioHint.setBounds (row (64));
+    endSection();
+
+    beginSection (txt ("Webzugriff"));
+    {
+        auto r = row (28);
+        o.webPortEditor.setBounds (r.removeFromRight (90));
+        o.webPortLabel.setBounds (r.removeFromRight (44));
+        o.webToggle.setBounds (r);
+    }
+    o.webInfo.setBounds (row (58));
+    for (auto* r : o.webRows)
+        r->setBounds (row (50));
     endSection();
 
     beginSection (txt ("Funkempfänger"));

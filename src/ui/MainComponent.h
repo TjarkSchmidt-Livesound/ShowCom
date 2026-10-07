@@ -19,6 +19,7 @@ public:
     void show (const TranscriptEntry&, bool flash);
     void acknowledge();
     bool isActive() const                   { return active; }
+    juce::String getUserId() const          { return active ? userId : juce::String(); }
 
     std::function<void (juce::int64 entryId)> onJump;
     std::function<void()> onVisibilityChanged;

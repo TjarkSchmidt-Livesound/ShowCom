@@ -118,6 +118,10 @@ UserEditor::UserEditor (AppController& a) : app (a)
     channelBox.onChange = [this] { commit(); };
     addAndMakeVisible (channelBox);
 
+    talkbackToggle.setTooltip (txt ("Aus = nur Funküberwachung, z. B. für Redner oder Bandmitglieder"));
+    talkbackToggle.onClick = [this] { commit(); };
+    addAndMakeVisible (talkbackToggle);
+
     rfBox.onChange = [this] { commit(); };
     addAndMakeVisible (rfBox);
 
@@ -172,6 +176,7 @@ void UserEditor::setUser (const juce::String& id)
     nameEditor.setText (u->name, false);
     roleEditor.setText (u->role, false);
     thresholdSlider.setValue (u->thresholdDb, juce::dontSendNotification);
+    talkbackToggle.setToggleState (u->talkbackLog, juce::dontSendNotification);
     refreshChannels();
     refreshRfList();
     repaint();
@@ -205,8 +210,16 @@ void UserEditor::refreshChannels()
 
     channelBox.setSelectedId (u->channel + 2, juce::dontSendNotification);
 
+    const bool tb = u->talkbackLog;
+    channelBox.setEnabled (tb);
+    thresholdSlider.setEnabled (tb);
+    channelLabel.setAlpha (tb ? 1.0f : 0.4f);
+    thresholdLabel.setAlpha (tb ? 1.0f : 0.4f);
+
     channelWarning = {};
-    if (auto* other = app.state.findUserForChannel (u->channel, userId))
+    if (! tb)
+        channelWarning = txt ("Nur Funküberwachung: Diese Person wird nicht transkribiert. Auf dem Board erscheint sie als große Foto-Kachel mit Akku und Funksignal.");
+    else if (auto* other = app.state.findUserForChannel (u->channel, userId))
         channelWarning = txt ("Achtung: Dieser Eingang ist schon ") + other->name + txt (" zugewiesen. Pro Eingang zählt nur eine Person.");
     else if (u->channel >= 0 && u->channel >= names.size())
         channelWarning = txt ("Das aktuelle Audio-Interface hat diesen Eingang nicht.");
@@ -267,6 +280,7 @@ void UserEditor::commit()
     u.name = nameEditor.getText().trim().isEmpty() ? u.name : nameEditor.getText().trim();
     u.role = roleEditor.getText().trim();
     u.channel = channelBox.getSelectedId() - 2;
+    u.talkbackLog = talkbackToggle.getToggleState();
 
     const int rfIndex = rfBox.getSelectedId() - 2;
     if (rfIndex >= 0 && rfIndex < (int) rfRefs.size())
@@ -326,7 +340,7 @@ void UserEditor::paint (juce::Graphics& g)
         return;
 
     // Pegel live, mit Schwelle
-    if (u->channel >= 0)
+    if (AppState::logsTalkback (*u))
     {
         const bool speaking = app.engine.isSpeaking (u->channel);
         const float level = app.engine.getLevelDb (u->channel);
@@ -415,6 +429,8 @@ void UserEditor::resized()
     removeAvatarButton.setBounds (b.removeFromTop (28).removeFromLeft (128));
     b.removeFromTop (14);
 
+    talkbackToggle.setBounds (b.removeFromTop (26));
+    b.removeFromTop (4);
     channelLabel.setBounds (b.removeFromTop (20));
     channelBox.setBounds (b.removeFromTop (34));
     b.removeFromTop (10);
@@ -530,13 +546,14 @@ void UsersPanel::paintListBoxItem (int row, juce::Graphics& g, int width, int he
     juce::String sub;
     if (u.role.isNotEmpty())
         sub << u.role << Theme::txt ("  ·  ");
-    sub << (u.channel >= 0 ? "Eingang " + juce::String (u.channel + 1) : txt ("kein Eingang"));
+    sub << (! u.talkbackLog ? txt ("nur Funk")
+            : u.channel >= 0 ? "Eingang " + juce::String (u.channel + 1) : txt ("kein Eingang"));
 
     g.setColour (Theme::textDim);
     g.setFont (Theme::font (13.0f));
     g.drawText (sub, b.removeFromTop (18), juce::Justification::centredLeft, true);
 
-    if (u.channel >= 0)
+    if (AppState::logsTalkback (u))
         Theme::drawMeter (g, b.removeFromTop (12).withSizeKeepingCentre (b.getWidth(), 6).toFloat(),
                           app.engine.getLevelDb (u.channel), u.thresholdDb, speaking, u.colour);
 }

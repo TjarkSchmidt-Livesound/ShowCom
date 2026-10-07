@@ -65,6 +65,7 @@ private:
                 thresholdLabel { {}, "Sprach-Schwelle" }, colourLabel { {}, "Farbe" };
     juce::TextEditor nameEditor, roleEditor;
     juce::ComboBox channelBox;
+    juce::ToggleButton talkbackToggle { "Talkback dieser Person mitloggen" };
     juce::Label rfLabel { {}, "Funkstrecke" };
     juce::ComboBox rfBox;
     std::vector<WirelessManager::ChannelRef> rfRefs;
