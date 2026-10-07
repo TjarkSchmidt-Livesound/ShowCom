@@ -109,6 +109,46 @@ void AlertBanner::paint (juce::Graphics& g)
 }
 
 //==============================================================================
+bool SetupBar::set (const juce::String& message, const juce::String& action, bool critical)
+{
+    if (message == text && action == actionText && critical == isCritical)
+        return false;
+
+    text = message;
+    actionText = action;
+    isCritical = critical;
+    repaint();
+    return true;
+}
+
+void SetupBar::paint (juce::Graphics& g)
+{
+    const auto colour = isCritical ? Theme::alert : Theme::accent;
+    g.fillAll (colour.withAlpha (0.16f));
+    g.setColour (colour);
+    g.fillRect (getLocalBounds().removeFromLeft (4));
+
+    auto b = getLocalBounds().reduced (18, 0);
+
+    if (actionText.isNotEmpty())
+    {
+        const auto f = Theme::font (13.0f, true);
+        const int w = juce::GlyphArrangement::getStringWidthInt (f, actionText) + 28;
+        auto pill = b.removeFromRight (w).withSizeKeepingCentre (w, 28).toFloat();
+        g.setColour (colour);
+        g.fillRoundedRectangle (pill, 6.0f);
+        g.setColour (Theme::background);
+        g.setFont (f);
+        g.drawText (actionText, pill, juce::Justification::centred);
+        b.removeFromRight (12);
+    }
+
+    g.setColour (Theme::text);
+    g.setFont (Theme::font (14.0f));
+    g.drawFittedText (text, b, juce::Justification::centredLeft, 2);
+}
+
+//==============================================================================
 MainComponent::MainComponent (AppController& a) : app (a)
 {
     setLookAndFeel (&lnf);
@@ -125,6 +165,9 @@ MainComponent::MainComponent (AppController& a) : app (a)
     banner.onJump = [this] (juce::int64 id) { jumpToEntry (id); };
     banner.onVisibilityChanged = [this] { resized(); };
     addChildComponent (banner);
+
+    setupBar.onAction = [this] { if (setupAction) setupAction(); };
+    addChildComponent (setupBar);
 
     tabs.setTabBarDepth (46);
     tabs.setOutline (0);
@@ -281,6 +324,86 @@ void MainComponent::changeListenerCallback (juce::ChangeBroadcaster*)
 }
 
 //==============================================================================
+void MainComponent::updateSetupBar()
+{
+    juce::String msg, action;
+    bool critical = true;
+    std::function<void()> act;
+
+    auto goSettings = [this] { tabs.setCurrentTabIndex (indexOfTab (&settingsPanel)); };
+    auto goPeople   = [this] { tabs.setCurrentTabIndex (indexOfTab (&usersPanel)); };
+
+    const auto inputs = app.engine.getInputChannelNames();
+    const auto modelState = app.transcriber.getModelState();
+
+    bool anyAssigned = false, anySignal = false;
+    for (auto& u : app.state.getUsers())
+    {
+        if (u.channel >= 0 && u.channel < inputs.size())
+        {
+            anyAssigned = true;
+            if (app.engine.getLevelDb (u.channel) > -100.0f)
+                anySignal = true;
+        }
+    }
+
+    const auto now = juce::Time::currentTimeMillis();
+    if (! anyAssigned || anySignal)
+        silentSinceMs = now;
+
+    if (inputs.isEmpty())
+    {
+        msg = txt ("Kein Audio-Eingang aktiv. Wähle unter Einstellungen dein Audio-Interface bzw. das Mikrofon.");
+        action = "Zu den Einstellungen";
+        act = goSettings;
+    }
+    else if (modelState == Transcriber::ModelState::none || modelState == Transcriber::ModelState::failed)
+    {
+        msg = txt ("Noch kein Spracherkennungs-Modell geladen – ohne Modell wird nichts transkribiert. "
+                   "Unter Einstellungen → Spracherkennung eins herunterladen.");
+        action = "Modell laden";
+        act = goSettings;
+    }
+    else if (modelState == Transcriber::ModelState::loading)
+    {
+        msg = txt ("Spracherkennungs-Modell wird geladen …");
+        critical = false;
+    }
+    else if (! anyAssigned)
+    {
+        msg = txt ("Noch keiner Person ist ein Eingang zugewiesen. Transkribiert werden nur Eingänge, die einer Person gehören "
+                   "(z. B. Eingang 1 = eingebautes Mikrofon).");
+        action = "Personen einrichten";
+        act = goPeople;
+    }
+    else if (app.isListening() && now - silentSinceMs > 8000)
+    {
+       #if JUCE_MAC
+        msg = txt ("Von den zugewiesenen Eingängen kommt kein Signal. Ist der Mikrofon-Zugriff erlaubt? "
+                   "Systemeinstellungen → Datenschutz & Sicherheit → Mikrofon → ShowCom einschalten, dann ShowCom neu starten.");
+       #else
+        msg = txt ("Von den zugewiesenen Eingängen kommt kein Signal. Stimmen Interface und Eingangs-Zuordnung? "
+                   "Unter Windows auch: Einstellungen → Datenschutz → Mikrofon.");
+       #endif
+        action = "Pegel prüfen";
+        act = goPeople;
+    }
+
+    setupAction = act;
+    const bool show = msg.isNotEmpty();
+    const bool changed = setupBar.set (msg, action, critical);
+
+    if (show != setupBar.isVisible())
+    {
+        setupBar.setVisible (show);
+        resized();
+    }
+    else if (changed)
+    {
+        setupBar.repaint();
+    }
+}
+
 void MainComponent::toggleListening()
 {
     if (! app.isListening())
@@ -337,6 +460,7 @@ void MainComponent::timerCallback()
         status << txt ("     ⚠ Audio-Aussetzer: ") << app.engine.getOverflowCount();
 
     statusLabel.setText (status, juce::dontSendNotification);
+    updateSetupBar();
     statusLabel.setColour (juce::Label::textColourId,
                            app.transcriber.getModelState() == Transcriber::ModelState::ready ? Theme::textDim : Theme::alert);
 
@@ -405,6 +529,9 @@ void MainComponent::resized()
     presenceArea = h.removeFromLeft (presenceWidth);
     h.removeFromLeft (12);
     statusLabel.setBounds (h);
+
+    if (setupBar.isVisible())
+        setupBar.setBounds (b.removeFromTop (44));
 
     banner.setVisible (banner.isActive());
     if (banner.isActive())

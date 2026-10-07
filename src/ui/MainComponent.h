@@ -37,6 +37,26 @@ private:
 };
 
 //==============================================================================
+/** Hinweisleiste: sagt klar, warum (noch) nichts transkribiert wird, mit Sprung zur Lösung. */
+class SetupBar : public juce::Component
+{
+public:
+    SetupBar() { setMouseCursor (juce::MouseCursor::PointingHandCursor); }
+
+    /** Gibt true zurück, wenn sich etwas geändert hat (Layout neu berechnen). */
+    bool set (const juce::String& message, const juce::String& action, bool critical);
+
+    std::function<void()> onAction;
+
+    void paint (juce::Graphics&) override;
+    void mouseUp (const juce::MouseEvent& e) override   { if (e.mouseWasClicked() && onAction) onAction(); }
+
+private:
+    juce::String text, actionText;
+    bool isCritical = true;
+};
+
+//==============================================================================
 class MainComponent : public juce::Component,
                       private TranscriptModel::Listener,
                       private juce::ChangeListener,
@@ -68,6 +88,10 @@ private:
     juce::Label statusLabel;
     juce::Rectangle<int> headerArea, presenceArea;
     AlertBanner banner { app };
+    SetupBar setupBar;
+    std::function<void()> setupAction;
+    juce::int64 silentSinceMs = 0;
+    void updateSetupBar();
     juce::TabbedComponent tabs { juce::TabbedButtonBar::TabsAtTop };
 
     BoardView board { app };
