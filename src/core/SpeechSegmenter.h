@@ -24,15 +24,16 @@ public:
         float  thresholdDb    = -45.0f;  // RMS-Schwelle in dBFS
         float  frameMs        = 20.0f;
         float  preRollMs      = 300.0f;  // Audio vor dem Einsatz mitnehmen (Anlaute!)
-        float  hangoverMs     = 700.0f;  // so lange unter der Schwelle, bis der Abschnitt endet
+        float  hangoverMs     = 500.0f;  // so lange unter der Schwelle, bis der Abschnitt endet
         float  minSpeechMs    = 250.0f;  // kürzere Abschnitte (Klicks, Huster) verwerfen
-        float  maxSegmentSec  = 25.0f;   // Whisper verarbeitet max. 30 s am Stück
+        float  maxSegmentSec  = 20.0f;   // Whisper verarbeitet max. 30 s am Stück
     };
 
     struct Segment
     {
         std::vector<float> audio;
         int64_t startSample = 0;   // Position im Strom (seit reset)
+        int utteranceId = 0;       // fortlaufende Nummer der Ansage
     };
 
     using Callback = std::function<void (Segment&&)>;
@@ -52,6 +53,11 @@ public:
     void reset();
 
     bool isInSpeech() const             { return inSpeech; }
+
+    /** Für Live-Zwischenstände: bisher aufgenommene Audiodaten der laufenden Ansage. */
+    const std::vector<float>& getCurrentAudio() const   { return current; }
+    int64_t getCurrentStart() const                     { return currentStart; }
+    int getUtteranceId() const                          { return utteranceId; }
     float getLastFrameDb() const        { return lastFrameDb; }
 
 private:
@@ -72,4 +78,5 @@ private:
     int speechFrames = 0, silentFrames = 0, segmentFrames = 0;
     bool inSpeech = false;
     float lastFrameDb = -120.0f;
+    int utteranceId = 0;
 };

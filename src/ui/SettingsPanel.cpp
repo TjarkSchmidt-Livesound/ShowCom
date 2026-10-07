@@ -6,11 +6,11 @@ using Theme::txt;
 const std::vector<ModelDownloader::Model>& ModelDownloader::models()
 {
     static const std::vector<Model> list = {
-        { "ggml-large-v3-turbo-q5_0.bin", "large-v3-turbo q5  (574 MB) – empfohlen" },
-        { "ggml-large-v3-turbo.bin",      "large-v3-turbo     (1,6 GB) – beste Qualität, braucht GPU" },
-        { "ggml-medium-q5_0.bin",         "medium q5          (539 MB)" },
-        { "ggml-small.bin",               "small              (488 MB) – schwächere Rechner" },
-        { "ggml-base.bin",                "base               (148 MB) – nur zum Testen" },
+        { "ggml-large-v3-turbo-q5_0.bin", "large-v3-turbo q5  (574 MB) – beste Wahl mit Apple-Chip / GPU" },
+        { "ggml-small-q5_1.bin",          "small q5           (190 MB) – schnell, empfohlen für Intel-Macs" },
+        { "ggml-medium-q5_0.bin",         "medium q5          (539 MB) – genauer, braucht mehr Rechenzeit" },
+        { "ggml-large-v3-turbo.bin",      "large-v3-turbo     (1,6 GB) – höchste Qualität, nur mit GPU" },
+        { "ggml-base-q5_1.bin",           "base q5            (60 MB) – sehr schnell, ungenauer" },
     };
     return list;
 }
@@ -232,7 +232,11 @@ SettingsPanel::SettingsPanel (AppController& a)
     int id = 1;
     for (auto& m : ModelDownloader::models())
         downloadBox.addItem (txt (m.label), id++);
-    downloadBox.setSelectedId (1, juce::dontSendNotification);
+   #if JUCE_MAC && JUCE_ARM
+    downloadBox.setSelectedId (1, juce::dontSendNotification);   // Apple-Chip: GPU, großes Modell läuft flott
+   #else
+    downloadBox.setSelectedId (2, juce::dontSendNotification);   // nur CPU: kleines, schnelles Modell
+   #endif
     content.addAndMakeVisible (downloadBox);
 
     downloadButton.onClick = [this] { startDownload(); };
@@ -270,6 +274,8 @@ SettingsPanel::SettingsPanel (AppController& a)
     accurateToggle.onClick = [this] { store ([v = accurateToggle.getToggleState()] (AppSettings& s) { s.accurateDecoding = v; }); };
     content.addAndMakeVisible (gpuToggle);
     content.addAndMakeVisible (accurateToggle);
+    liveToggle.onClick = [this] { store ([v = liveToggle.getToggleState()] (AppSettings& s) { s.liveText = v; }); };
+    content.addAndMakeVisible (liveToggle);
 
     // --- Mein Name ---------------------------------------------------------
     keywordsHint.setText (txt ("Dein Name und Varianten, kommagetrennt – z. B. „Tjark, Tjarki, Monitor-Tjark“. "
@@ -322,6 +328,7 @@ void SettingsPanel::loadFromState()
     languageBox.setSelectedId (s.language == "de" ? 1 : s.language == "en" ? 2 : 3, juce::dontSendNotification);
     gpuToggle.setToggleState (s.useGpu, juce::dontSendNotification);
     accurateToggle.setToggleState (s.accurateDecoding, juce::dontSendNotification);
+    liveToggle.setToggleState (s.liveText, juce::dontSendNotification);
 
     if (! keywordsEditor.hasKeyboardFocus (true))
         keywordsEditor.setText (s.keywords, false);
@@ -515,6 +522,7 @@ void SettingsPanel::Content::resized()
     o.languageBox.setBounds (row (32).withWidth (320));
     o.gpuToggle.setBounds (row (26));
     o.accurateToggle.setBounds (row (26));
+    o.liveToggle.setBounds (row (26));
     endSection();
 
     beginSection (txt ("Mein Name – Erwähnungs-Alarm"));

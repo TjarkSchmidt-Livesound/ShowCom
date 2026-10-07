@@ -44,20 +44,23 @@ private:
     // TranscriptModel::Listener
     void transcriptEntryAdded (const TranscriptEntry&) override;
     void transcriptReset() override;
+    void transcriptLiveChanged (const juce::String& userId) override;
     // ChangeListener (AppState: Namen, Farben, Avatare)
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void timerCallback() override;
 
     bool accepts (const TranscriptEntry&) const;
     void rebuild();
-    void layoutRow (Row&, const TranscriptEntry&) const;
+    void layoutRow (Row&, const TranscriptEntry&, bool live = false) const;
+    void layoutLive();
+    int rowsBottom() const;
     void relayout();
     bool isScrolledToBottom() const;
     void scrollToBottom();
     int textWidth() const;
     int headerHeight() const        { return filter == Filter::user ? 84 : 0; }
     void paintUserHeader (juce::Graphics&, juce::Rectangle<int>);
-    void paintRow (juce::Graphics&, const Row&, const TranscriptEntry&, int width);
+    void paintRow (juce::Graphics&, const Row&, const TranscriptEntry&, int width, bool live = false);
     const Row* rowAt (int y) const;
 
     AppController& app;
@@ -67,6 +70,9 @@ private:
     juce::Viewport viewport;
     Content content { *this };
     std::vector<Row> rows;
+
+    struct LiveRow { juce::String userId; Row row; };
+    std::vector<LiveRow> liveRows;   // was gerade gesprochen wird
 
     juce::TextButton jumpButton { juce::CharPointer_UTF8 ("Neueste \xe2\x86\x93") };
     juce::int64 flashId = -1;

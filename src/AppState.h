@@ -39,6 +39,7 @@ struct AppSettings
     bool flashAlert = true;
     bool useGpu = true;
     bool accurateDecoding = false;      // Beam-Search statt Greedy
+    bool liveText = true;               // Zwischenstände schon während des Sprechens
     juce::String audioDeviceState;      // XML von AudioDeviceManager
     std::vector<WirelessDeviceConfig> wirelessDevices;
 };

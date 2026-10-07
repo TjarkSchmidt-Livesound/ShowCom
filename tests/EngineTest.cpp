@@ -291,9 +291,13 @@ int main()
         engine.getDeviceManager().setAudioDeviceSetup (setup, true);
     }
 
-    std::vector<AudioEngine::Segment> segments;
+    std::vector<AudioEngine::Segment> segments, partials;
     juce::CriticalSection segLock;
-    engine.onSegment = [&] (AudioEngine::Segment&& s) { const juce::ScopedLock sl (segLock); segments.push_back (std::move (s)); };
+    engine.onSegment = [&] (AudioEngine::Segment&& s)
+    {
+        const juce::ScopedLock sl (segLock);
+        (s.partial ? partials : segments).push_back (std::move (s));
+    };
 
     AudioEngine::Assignment a;
     a.userId = "anna";
@@ -318,6 +322,15 @@ int main()
     engine.setListening (false);
 
     check (sawSpeaking, "Sprech-Anzeige wurde aktiv");
+    {
+        const juce::ScopedLock sl (segLock);
+        check (! partials.empty(), "Live-Zwischenstände während des Sprechens gesendet");
+        if (! partials.empty() && ! segments.empty())
+            check (partials.front().utteranceId == segments.front().utteranceId
+                   && partials.front().audio.size() < segments.front().audio.size(),
+                   "Zwischenstand gehört zur selben Ansage und ist kürzer als das Endergebnis");
+        std::printf ("      %d Zwischenstände, %d Endergebnisse\n", (int) partials.size(), (int) segments.size());
+    }
     check (level > -20.0f, "Pegelanzeige für nicht zugewiesenen Eingang funktioniert");
     check (engine.getOverflowCount() == 0, "keine FIFO-Überläufe");
 

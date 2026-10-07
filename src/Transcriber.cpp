@@ -49,6 +49,13 @@ void Transcriber::enqueue (Job&& job)
     {
         const juce::ScopedLock sl (lock);
 
+        // Zwischenstände derselben Person sind überholt, sobald ein neuerer oder das Endergebnis kommt
+        queue.erase (std::remove_if (queue.begin(), queue.end(), [&] (const Job& j)
+                     {
+                         return j.partial && j.userId == job.userId
+                                && (job.partial || j.utteranceId == job.utteranceId);
+                     }), queue.end());
+
         if (queue.size() >= maxQueue)
             queue.pop_front();   // Notbremse: lieber Altes verwerfen als ewig hinterherhinken
 
@@ -107,7 +114,7 @@ void Transcriber::loadModelIfNeeded()
 
     auto cparams = whisper_context_default_params();
     cparams.use_gpu = opts.useGpu;
-    cparams.flash_attn = opts.useGpu;
+    cparams.flash_attn = true;   // auch auf der CPU schneller
 
     ctx = whisper_init_from_file_with_params (path.toRawUTF8(), cparams);
 
@@ -194,13 +201,19 @@ void Transcriber::transcribe (Job& job)
                                                                     : activeOptions.language.toStdString();
     const std::string prompt = activeOptions.prompt.toStdString();
 
-    params.n_threads        = juce::jlimit (2, 8, juce::SystemStats::getNumPhysicalCpus());
+    // Tempo: Whisper rechnet sonst immer ein 30-s-Fenster. Bei kurzen Talkback-Ansagen nur so viel
+    // Kontext wie nötig (50 Encoder-Frames pro Sekunde, plus Reserve) – das ist der größte Hebel.
+    const double secs = (double) pcm.size() / whisperRate;
+    const int audioCtx = juce::jlimit (384, 1500, (int) std::ceil ((secs + 1.0) * 50.0));
+
+    params.n_threads        = juce::jlimit (2, 16, juce::SystemStats::getNumPhysicalCpus());
+    params.audio_ctx        = audioCtx >= 1500 ? 0 : audioCtx;
     params.language         = language.c_str();
     params.detect_language  = false;
     params.translate        = false;
     params.no_context       = true;     // jeder Abschnitt unabhängig: keine Fehlerfortpflanzung
     params.no_timestamps    = true;
-    params.single_segment   = false;
+    params.single_segment   = secs < 12.0;   // kurze Ansage = ein Segment, spart Dekodierschritte
     params.print_progress   = false;
     params.print_realtime   = false;
     params.print_special    = false;
@@ -209,7 +222,14 @@ void Transcriber::transcribe (Job& job)
     params.suppress_nst     = true;
     params.initial_prompt   = prompt.empty() ? nullptr : prompt.c_str();
     params.beam_search.beam_size = 5;
-    params.greedy.best_of        = 2;
+    params.greedy.best_of        = 1;
+
+    if (job.partial)
+    {
+        // Zwischenstand: so schnell wie möglich, keine Wiederholungsversuche
+        params.strategy = WHISPER_SAMPLING_GREEDY;
+        params.temperature_inc = 0.0f;
+    }
 
     if (whisper_full (ctx, params, pcm.data(), (int) pcm.size()) != 0)
         return;
@@ -234,11 +254,13 @@ void Transcriber::transcribe (Job& job)
 
     const double duration = (double) job.audio.size() / job.sampleRate;
     const double elapsed = (juce::Time::getMillisecondCounterHiRes() - startMs) / 1000.0;
-    lastRtf.store (duration > 0.0 ? elapsed / duration : 0.0);
+    if (! job.partial)
+        lastRtf.store (duration > 0.0 ? elapsed / duration : 0.0);
 
-    if (text.isEmpty())
+    if (text.isEmpty() && job.partial)
         return;
 
+    // Auch ein leeres Endergebnis wird gemeldet: Es räumt den Live-Text dieser Ansage ab.
     Result r;
     r.userId = job.userId;
     r.text = text;
@@ -246,6 +268,8 @@ void Transcriber::transcribe (Job& job)
     r.sessionOffsetSec = job.sessionOffsetSec;
     r.durationSec = duration;
     r.processingSec = elapsed;
+    r.partial = job.partial;
+    r.utteranceId = job.utteranceId;
 
     juce::MessageManager::callAsync ([this, flag = alive, r]
     {
@@ -273,8 +297,14 @@ void Transcriber::run()
                     break;
 
                 busy.store (true);   // vor dem Entnehmen setzen: Queue leer + nicht busy heißt wirklich fertig
-                job = std::move (queue.front());
-                queue.pop_front();
+
+                // Endergebnisse haben Vorrang; Zwischenstände nur, wenn sonst nichts wartet
+                auto it = std::find_if (queue.begin(), queue.end(), [] (const Job& j) { return ! j.partial; });
+                if (it == queue.end())
+                    it = queue.begin();
+
+                job = std::move (*it);
+                queue.erase (it);
                 queueSize.store ((int) queue.size());
             }
 

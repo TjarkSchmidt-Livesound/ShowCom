@@ -25,6 +25,8 @@ public:
         double sampleRate = 48000.0;
         double sessionOffsetSec = 0.0;
         juce::Time wallClock;
+        bool partial = false;      // Zwischenstand, während noch gesprochen wird
+        int utteranceId = 0;       // gleiche Ansage -> gleiche Id (Zwischenstände + Endergebnis)
     };
 
     struct Result
@@ -35,6 +37,8 @@ public:
         double sessionOffsetSec = 0.0;
         double durationSec = 0.0;
         double processingSec = 0.0;
+        bool partial = false;
+        int utteranceId = 0;
     };
 
     struct Options

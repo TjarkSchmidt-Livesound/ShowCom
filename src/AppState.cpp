@@ -66,6 +66,7 @@ void AppState::load()
             settings.flashAlert       = flag ("flashAlert", true);
             settings.useGpu           = flag ("useGpu", true);
             settings.accurateDecoding = flag ("accurateDecoding", false);
+            settings.liveText         = flag ("liveText", true);
         }
 
         settings.wirelessDevices.clear();
@@ -129,6 +130,7 @@ void AppState::save() const
     s->setProperty ("flashAlert",       settings.flashAlert);
     s->setProperty ("useGpu",           settings.useGpu);
     s->setProperty ("accurateDecoding", settings.accurateDecoding);
+    s->setProperty ("liveText",         settings.liveText);
 
     juce::Array<juce::var> arr;
 

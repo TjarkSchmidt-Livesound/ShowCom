@@ -124,11 +124,11 @@ static void testSegmenter()
 
     // Langer Monolog wird bei maxSegmentSec geteilt
     out.clear();
-    feed (tone (sr, 60.0, 0.3f));
+    feed (tone (sr, 50.0, 0.3f));
     feed (tone (sr, 1.5, 0.0001f));
     CHECK (out.size() == 3);
     for (auto& s : out)
-        CHECK ((double) s.audio.size() / sr <= 25.5);
+        CHECK ((double) s.audio.size() / sr <= 20.5);
 
     // Flush gibt laufenden Abschnitt aus
     out.clear();

@@ -110,6 +110,7 @@ private:
     juce::ComboBox languageBox;
     juce::ToggleButton gpuToggle { "GPU benutzen (Metal / CUDA / Vulkan, falls einkompiliert)" };
     juce::ToggleButton accurateToggle { "Genauer dekodieren (Beam-Search, etwas langsamer)" };
+    juce::ToggleButton liveToggle { txtInit ("Live-Text schon während des Sprechens (braucht mehr Rechenleistung)") };
 
     // Mein Name
     juce::Label keywordsHint;

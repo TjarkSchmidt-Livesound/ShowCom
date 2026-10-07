@@ -250,7 +250,37 @@ void AudioEngine::rebuildChannelStates()
     assignmentsDirty = false;
 }
 
-void AudioEngine::emitSegment (ChannelState& state, SpeechSegmenter::Segment&& seg)
+void AudioEngine::maybeEmitLive (ChannelState& state)
+{
+    const float interval = liveIntervalSec.load();
+    auto& seg = state.segmenter;
+
+    if (interval <= 0.0f || ! listening.load() || ! seg.isInSpeech() || preparedSampleRate <= 0.0)
+        return;
+
+    const auto& audio = seg.getCurrentAudio();
+    const auto step = (size_t) (interval * preparedSampleRate);
+
+    if (state.liveUtterance != seg.getUtteranceId())
+    {
+        state.liveUtterance = seg.getUtteranceId();
+        state.liveSamples = 0;
+    }
+
+    // Erst ab ~0,8 s Sprache, danach im eingestellten Takt
+    if (audio.size() < step || audio.size() < state.liveSamples + step)
+        return;
+
+    state.liveSamples = audio.size();
+
+    SpeechSegmenter::Segment s;
+    s.audio = audio;
+    s.startSample = seg.getCurrentStart();
+    s.utteranceId = seg.getUtteranceId();
+    emitSegment (state, std::move (s), true);
+}
+
+void AudioEngine::emitSegment (ChannelState& state, SpeechSegmenter::Segment&& seg, bool partial)
 {
     if (! listening.load() || ! onSegment || preparedSampleRate <= 0.0)
         return;
@@ -261,6 +291,8 @@ void AudioEngine::emitSegment (ChannelState& state, SpeechSegmenter::Segment&& s
     out.sampleRate = preparedSampleRate;
     out.sessionOffsetSec = state.streamBaseSec + (double) seg.startSample / preparedSampleRate;
     out.wallClock = listenStartTime + juce::RelativeTime::seconds (out.sessionOffsetSec);
+    out.partial = partial;
+    out.utteranceId = seg.utteranceId;
     out.audio = std::move (seg.audio);
 
     onSegment (std::move (out));
@@ -324,6 +356,9 @@ void AudioEngine::run()
                 st->segmenter.process (scratch.data(), num,
                                        [this, st] (SpeechSegmenter::Segment&& s) { emitSegment (*st, std::move (s)); });
             }
+
+            if (st != nullptr)
+                maybeEmitLive (*st);
 
             speaking[(size_t) ch].store (st != nullptr && st->segmenter.isInSpeech());
         }

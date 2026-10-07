@@ -303,7 +303,25 @@ void MainComponent::transcriptEntryAdded (const TranscriptEntry& e)
 
     ++mentionCount;
     updateMentionTabName();
-    banner.show (e, app.state.getSettings().flashAlert);
+
+    // Wurde schon beim Live-Text alarmiert? Dann nicht noch einmal blinken.
+    const auto key = e.userId + ":" + juce::String (e.utteranceId);
+    if (e.utteranceId < 0 || alertedUtterances.count (key) == 0)
+        banner.show (e, app.state.getSettings().flashAlert);
+    alertedUtterances.insert (key);
+}
+
+void MainComponent::transcriptLiveChanged (const juce::String& userId)
+{
+    const auto& live = app.transcript.getLive();
+    auto it = live.find (userId);
+    if (it == live.end() || ! it->second.isMention())
+        return;
+
+    // Name fällt gerade – sofort alarmieren, nicht erst nach Ende der Ansage
+    const auto key = userId + ":" + juce::String (it->second.utteranceId);
+    if (alertedUtterances.insert (key).second)
+        banner.show (it->second, app.state.getSettings().flashAlert);
 }
 
 void MainComponent::transcriptReset()

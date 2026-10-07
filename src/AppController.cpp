@@ -6,19 +6,44 @@ AppController::AppController()
 
     transcriber.onResult = [this] (const Transcriber::Result& r)
     {
+        if (r.text.isEmpty())
+        {
+            const auto& live = transcript.getLive();
+            if (auto it = live.find (r.userId); it != live.end() && it->second.utteranceId <= r.utteranceId)
+                transcript.clearLive (r.userId);
+            return;
+        }
+
         TranscriptEntry e;
         e.userId = r.userId;
         e.time = r.wallClock;
         e.sessionOffsetSec = r.sessionOffsetSec;
         e.durationSec = r.durationSec;
         e.text = r.text;
+        e.utteranceId = r.utteranceId;
 
         if (auto* u = state.findUser (r.userId))
             e.speakerName = u->name;
         else
             e.speakerName = "Unbekannt";
 
-        transcript.add (std::move (e));
+        if (r.partial)
+        {
+            // Ein später Zwischenstand darf ein schon fertiges Endergebnis nicht überschreiben
+            for (auto it = transcript.getEntries().rbegin(); it != transcript.getEntries().rend(); ++it)
+                if (it->userId == r.userId)
+                {
+                    if (it->utteranceId >= r.utteranceId)
+                        return;
+                    break;
+                }
+
+            transcript.setLive (std::move (e));
+        }
+        else
+        {
+            transcript.add (std::move (e));
+        }
     };
 
     // Läuft auf dem Verarbeitungs-Thread der Engine; enqueue ist thread-sicher.
@@ -30,6 +55,8 @@ AppController::AppController()
         job.sampleRate = s.sampleRate;
         job.sessionOffsetSec = s.sessionOffsetSec;
         job.wallClock = s.wallClock;
+        job.partial = s.partial;
+        job.utteranceId = s.utteranceId;
         transcriber.enqueue (std::move (job));
     };
 
@@ -114,6 +141,7 @@ void AppController::applyState()
     }
     engine.setAssignments (assignments);
     wireless.setDevices (s.wirelessDevices);
+    engine.setLiveInterval (s.liveText ? 0.8f : 0.0f);
 
     Transcriber::Options o;
     o.model = s.modelPath.isNotEmpty() ? juce::File (s.modelPath) : juce::File();
@@ -239,5 +267,17 @@ void AppController::injectDemoConversation()
 
         t = t + juce::RelativeTime::seconds (25 + 17 * (i % 3));
         ++i;
+    }
+
+    // Eine Person spricht gerade: Live-Text
+    if (users.size() > 2)
+    {
+        TranscriptEntry e;
+        e.userId = users[2].id;
+        e.speakerName = users[2].name;
+        e.time = juce::Time::getCurrentTime();
+        e.utteranceId = 1000;
+        e.text = juce::String::fromUTF8 ("Ich bräuchte gleich noch einen zweiten Handsender für die");
+        transcript.setLive (std::move (e));
     }
 }

@@ -392,8 +392,21 @@ void BoardView::paintCard (juce::Graphics& g, juce::Rectangle<float> r, const Us
         g.drawText (sub.toUpperCase(), h, juce::Justification::topLeft, true);
     }
 
-    // --- Letzte Ansage ------------------------------------------------------
-    if (auto it = lastUtterance.find (u.id); it != lastUtterance.end())
+    // --- Live-Text (spricht gerade) oder letzte Ansage -------------------------
+    const auto& liveMap = app.transcript.getLive();
+    if (auto lv = liveMap.find (u.id); lv != liveMap.end())
+    {
+        auto la = lastArea.reduced (0.0f, 4.0f);
+        g.setColour (lv->second.isMention() ? Theme::alert : u.colour.brighter (0.4f));
+        g.setFont (Theme::font (11.0f, true));
+        g.drawText (lv->second.isMention() ? txt ("ERWÄHNT  ·  SPRICHT …") : txt ("SPRICHT …"),
+                    la.removeFromTop (16.0f), juce::Justification::centredLeft);
+
+        g.setColour (Theme::text.withAlpha (0.75f));
+        g.setFont (Theme::font (14.0f));
+        g.drawFittedText (lv->second.text + txt (" …"), la.toNearestInt(), juce::Justification::topLeft, 3, 1.0f);
+    }
+    else if (auto it = lastUtterance.find (u.id); it != lastUtterance.end())
     {
         auto la = lastArea.reduced (0.0f, 4.0f);
         g.setColour (it->second.mention ? Theme::alert : Theme::textFaint);

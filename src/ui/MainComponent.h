@@ -7,6 +7,8 @@
 #include "SettingsPanel.h"
 #include "BoardView.h"
 
+#include <set>
+
 /** Großes, blinkendes Banner, wenn dein Name fällt. Klick = gesehen + hinspringen. */
 class AlertBanner : public juce::Component,
                     private juce::Timer
@@ -72,6 +74,8 @@ public:
 private:
     void transcriptEntryAdded (const TranscriptEntry&) override;
     void transcriptReset() override;
+    void transcriptLiveChanged (const juce::String& userId) override;
+    std::set<juce::String> alertedUtterances;   // "userId:utterance" – Alarm nur einmal pro Ansage
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void timerCallback() override;
 

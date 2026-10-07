@@ -11,6 +11,8 @@
 - **Tabs**: *Konversation* (alle chronologisch), *Erwähnungen*, ein Tab pro Person, *Personen*, *Einstellungen*.
 - **Namens-Alarm**: Dein Name (plus Varianten) wird in jedem Transkript gesucht – ohne Groß/klein, mit Umlaut-Faltung und optional unscharf („Tjarck“ → „Tjark“). Bei einem Treffer blinkt oben ein großes Banner, der Beitrag wird markiert, ein Klick springt hin.
 - **Lokal & offline**: Spracherkennung mit [whisper.cpp](https://github.com/ggml-org/whisper.cpp), auf dem Mac per GPU (Metal). Kein Internet am Venue nötig, keine Daten in der Cloud.
+- **Live-Text**: Schon während jemand spricht, erscheint der Text (alle ~0,8 s aktualisiert); der Namens-Alarm kommt mitten im Satz. Nach dem letzten Wort wird der Text innerhalb einer halben Sekunde abgeschlossen.
+- **Hinweisleiste**: Fehlt etwas (Modell, Eingang, Mikrofon-Zugriff), steht oben, was zu tun ist – mit Sprung zur richtigen Einstellung.
 - **Hört immer zu, speichert nichts**: ShowCom hört ab dem Programmstart mit (oben „HÖRT ZU“, per Klick pausierbar). Es werden keine Audiodateien und keine Protokolle geschrieben; das Audio wird nur im Arbeitsspeicher verarbeitet.
 - **Sicher am Pult**: Die Software öffnet das Interface nur mit Eingängen und gibt nie Audio aus.
 
@@ -24,7 +26,8 @@ AudioEngine – Verarbeitungs-Thread
    │  pro Person: Sprach-Gate (Pre-Roll 300 ms, Nachlauf 700 ms, max. 25 s)
    ▼
 Transcriber – eigener Thread, whisper.cpp
-   │  48 kHz → 16 kHz, Pegel anheben, Halluzinationen filtern, Namen als Prompt
+   │  48 kHz → 16 kHz, Pegel anheben, Halluzinationen filtern, Namen als Prompt,
+   │  Rechenfenster an die Länge der Ansage angepasst, Live-Zwischenstände nachrangig
    ▼
 TranscriptModel → Namenssuche (KeywordMatcher) → GUI (JUCE)
 ```
@@ -99,7 +102,7 @@ ctest --test-dir build -C Release --output-on-failure
 
 ## Erste Schritte
 
-1. **Einstellungen → Spracherkennung**: Modell wählen und *Herunterladen*. Empfohlen: `large-v3-turbo q5` (574 MB, gute Qualität bei Deutsch). Auf schwachen Rechnern `small`. Sprache: Deutsch.
+1. **Einstellungen → Spracherkennung**: Modell wählen und *Herunterladen*. Mac mit Apple-Chip: `large-v3-turbo q5` (574 MB, beste Qualität). Intel-Mac und Windows ohne GPU: `small q5` (190 MB, schnell). Sprache: Deutsch.
 2. **Einstellungen → Audio-Interface**: unter Windows Typ **ASIO** und dein Interface wählen, unter macOS das CoreAudio-Gerät.
 3. **Personen**: Für jede Person *+ Person*, Name, Funktion, Avatar, **Eingang** wählen. Die **Sprach-Schwelle** (gelber Strich) knapp über das Grundrauschen bzw. Bühnen-Übersprechen stellen – der Pegelbalken zeigt live, ob Sprache erkannt wird.
 4. **Einstellungen → Mein Name**: deinen Namen und Varianten eintragen, z. B. `Tjark, Tjarki, Monitor-Tjark`. Mit *Alarm testen* prüfen.

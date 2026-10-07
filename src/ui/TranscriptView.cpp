@@ -49,8 +49,9 @@ int TranscriptView::textWidth() const
     return juce::jmax (100, viewport.getMaximumVisibleWidth() - leftText - rightPad);
 }
 
-void TranscriptView::layoutRow (Row& row, const TranscriptEntry& e) const
+void TranscriptView::layoutRow (Row& row, const TranscriptEntry& e, bool live) const
 {
+    const auto textColour = live ? Theme::textDim : Theme::text;
     juce::AttributedString s;
     s.setWordWrap (juce::AttributedString::byWord);
     s.setJustification (juce::Justification::topLeft);
@@ -63,14 +64,14 @@ void TranscriptView::layoutRow (Row& row, const TranscriptEntry& e) const
     {
         const int start = (int) m.charStart, len = (int) m.charLength;
         if (start > pos)
-            s.append (e.text.substring (pos, start), normal, Theme::text);
+            s.append (e.text.substring (pos, start), normal, textColour);
 
         s.append (e.text.substring (start, start + len), strong, Theme::alert);
         pos = start + len;
     }
 
     if (pos < e.text.length())
-        s.append (e.text.substring (pos), normal, Theme::text);
+        s.append (e.text.substring (pos), normal, textColour);
 
     row.layout.createLayout (s, (float) textWidth());
     row.height = juce::jmax (avatarSize + 20, topLine + (int) std::ceil (row.layout.getHeight()) + 16);
@@ -88,8 +89,42 @@ void TranscriptView::relayout()
         y += r.height + 4;
     }
 
+    layoutLive();
+}
+
+int TranscriptView::rowsBottom() const
+{
+    return rows.empty() ? 8 : rows.back().y + rows.back().height + 4;
+}
+
+void TranscriptView::layoutLive()
+{
+    liveRows.clear();
+    int y = rowsBottom();
+
+    for (auto& [uid, e] : app.transcript.getLive())
+    {
+        if (! accepts (e))
+            continue;
+
+        LiveRow lr;
+        lr.userId = uid;
+        layoutRow (lr.row, e, true);
+        lr.row.y = y;
+        y += lr.row.height + 4;
+        liveRows.push_back (std::move (lr));
+    }
+
     content.setSize (viewport.getMaximumVisibleWidth(), juce::jmax (y + 8, viewport.getHeight()));
     content.repaint();
+}
+
+void TranscriptView::transcriptLiveChanged (const juce::String&)
+{
+    const bool follow = isScrolledToBottom();
+    layoutLive();
+    if (follow)
+        scrollToBottom();
 }
 
 void TranscriptView::rebuild()
@@ -140,12 +175,10 @@ void TranscriptView::transcriptEntryAdded (const TranscriptEntry& e)
     Row r;
     r.id = e.id;
     layoutRow (r, e);
-    r.y = rows.empty() ? 8 : rows.back().y + rows.back().height + 4;
+    r.y = rowsBottom();
     rows.push_back (std::move (r));
 
-    content.setSize (viewport.getMaximumVisibleWidth(),
-                     juce::jmax (rows.back().y + rows.back().height + 12, viewport.getHeight()));
-    content.repaint();
+    layoutLive();   // Live-Zeilen rutschen unter den neuen Eintrag
 
     if (follow)
         scrollToBottom();
@@ -168,6 +201,9 @@ void TranscriptView::timerCallback()
 {
     if (filter == Filter::user)
         repaint (0, 0, getWidth(), headerHeight());
+
+    if (! liveRows.empty())
+        content.repaint (0, liveRows.front().row.y, content.getWidth(), content.getHeight() - liveRows.front().row.y);
 
     if (flashId >= 0 && juce::Time::getMillisecondCounterHiRes() > flashUntilMs)
     {
@@ -275,12 +311,24 @@ const TranscriptView::Row* TranscriptView::rowAt (int y) const
     return nullptr;
 }
 
-void TranscriptView::paintRow (juce::Graphics& g, const Row& r, const TranscriptEntry& e, int width)
+void TranscriptView::paintRow (juce::Graphics& g, const Row& r, const TranscriptEntry& e, int width, bool live)
 {
     auto bounds = juce::Rectangle<int> (8, r.y, width - 16, r.height);
     auto* u = app.state.findUser (e.userId);
     const auto colour = u != nullptr ? u->colour : Theme::textDim;
     const auto name = u != nullptr ? u->name : e.speakerName;
+
+    if (live)
+    {
+        auto* lu = app.state.findUser (e.userId);
+        const auto c = lu != nullptr ? lu->colour : Theme::textDim;
+        g.setColour (c.withAlpha (0.08f));
+        g.fillRoundedRectangle (bounds.toFloat(), 8.0f);
+        g.setColour (c.withAlpha (0.6f));
+        const float dash[] = { 4.0f, 4.0f };
+        g.drawDashedLine (juce::Line<float> ((float) bounds.getX() + 2.0f, (float) bounds.getY() + 4.0f,
+                                             (float) bounds.getX() + 2.0f, (float) bounds.getBottom() - 4.0f), dash, 2, 3.0f);
+    }
 
     if (e.isMention())
     {
@@ -313,6 +361,19 @@ void TranscriptView::paintRow (juce::Graphics& g, const Row& r, const Transcript
     if (u != nullptr && u->role.isNotEmpty())
         meta << u->role << Theme::txt ("  ·  ");
     meta << e.time.formatted ("%H:%M:%S");
+
+    if (live)
+    {
+        // pulsierender Punkt + "spricht …"
+        const float phase = (float) std::fmod (juce::Time::getMillisecondCounterHiRes() / 600.0, 2.0);
+        g.setColour (colour.withAlpha (phase < 1.0f ? 1.0f : 0.35f));
+        g.fillEllipse ((float) head.getX(), (float) head.getCentreY() - 4.0f, 8.0f, 8.0f);
+        head.removeFromLeft (14);
+        g.setFont (Theme::font (13.0f, true));
+        g.setColour (colour);
+        meta = Theme::txt ("spricht …");
+    }
+
     g.drawText (meta, head, juce::Justification::centredLeft, true);
 
     if (e.isMention())
@@ -331,7 +392,7 @@ void TranscriptView::Content::paint (juce::Graphics& g)
     g.fillAll (Theme::background);
     const auto clip = g.getClipBounds();
 
-    if (owner.rows.empty())
+    if (owner.rows.empty() && owner.liveRows.empty())
     {
         g.setColour (Theme::textFaint);
         g.setFont (Theme::font (16.0f));
@@ -339,7 +400,7 @@ void TranscriptView::Content::paint (juce::Graphics& g)
         juce::String msg;
         switch (owner.filter)
         {
-            case Filter::all:      msg = "Noch keine Transkripte. Starte oben eine Session."; break;
+            case Filter::all:      msg = Theme::txt ("Noch keine Transkripte. Sobald jemand spricht, erscheint es hier."); break;
             case Filter::mentions: msg = juce::String (juce::CharPointer_UTF8 ("Noch keine Erw\xc3\xa4hnungen deines Namens.")); break;
             case Filter::user:     msg = Theme::txt ("Noch keine Beiträge von dieser Person."); break;
         }
@@ -355,6 +416,11 @@ void TranscriptView::Content::paint (juce::Graphics& g)
     for (; it != owner.rows.end() && it->y < clip.getBottom(); ++it)
         if (auto* e = owner.app.transcript.findEntry (it->id))
             owner.paintRow (g, *it, *e, getWidth());
+
+    const auto& live = owner.app.transcript.getLive();
+    for (auto& lr : owner.liveRows)
+        if (auto l = live.find (lr.userId); l != live.end() && lr.row.y < clip.getBottom())
+            owner.paintRow (g, lr.row, l->second, getWidth(), true);
 }
 
 void TranscriptView::Content::mouseUp (const juce::MouseEvent& ev)

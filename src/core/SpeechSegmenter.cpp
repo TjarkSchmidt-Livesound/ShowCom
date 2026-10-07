@@ -73,6 +73,7 @@ void SpeechSegmenter::processFrame (const Callback& onSegment)
     {
         if (loud)
         {
+            ++utteranceId;
             inSpeech = true;
             speechFrames = 1;
             silentFrames = 0;
@@ -116,6 +117,7 @@ void SpeechSegmenter::processFrame (const Callback& onSegment)
     {
         // Langer Monolog: Abschnitt schließen und nahtlos einen neuen beginnen
         emit (onSegment);
+        ++utteranceId;
         inSpeech = true;
         speechFrames = 0;
         silentFrames = 0;
@@ -132,6 +134,7 @@ void SpeechSegmenter::emit (const Callback& onSegment)
         Segment s;
         s.audio = current;   // Kopie, damit 'current' seine Kapazität behält
         s.startSample = currentStart;
+        s.utteranceId = utteranceId;
         onSegment (std::move (s));
     }
 

@@ -41,6 +41,8 @@ public:
         double sampleRate = 48000.0;
         double sessionOffsetSec = 0.0;   // Start relativ zum Beginn des Zuhörens
         juce::Time wallClock;
+        bool partial = false;            // Zwischenstand einer noch laufenden Ansage
+        int utteranceId = 0;
     };
 
     AudioEngine();
@@ -61,6 +63,9 @@ public:
     // --- Zuhören (Abschnitte an die Transkription weitergeben) ------------------
     void setListening (bool shouldListen);
     bool isListening() const                                { return listening.load(); }
+
+    /** Live-Zwischenstände: alle n Sekunden die laufende Ansage schicken (0 = aus). */
+    void setLiveInterval (float seconds)                    { liveIntervalSec.store (seconds); }
     double getListeningSeconds() const;
 
     // --- Status für die GUI (beliebiger Thread) -------------------------------
@@ -95,11 +100,14 @@ private:
         Assignment assignment;
         SpeechSegmenter segmenter;
         double streamBaseSec = 0.0;   // Zeit seit Beginn des Zuhörens, zu der dieser Segmenter gestartet ist
+        int liveUtterance = -1;       // für welche Ansage zuletzt ein Zwischenstand ging
+        size_t liveSamples = 0;       // ... und wie lang sie da war
     };
 
     void rebuildChannelStates();                       // processLock gehalten
     void prepareState (ChannelState&, double baseSec); // processLock gehalten
-    void emitSegment (ChannelState&, SpeechSegmenter::Segment&&);
+    void emitSegment (ChannelState&, SpeechSegmenter::Segment&&, bool partial = false);
+    void maybeEmitLive (ChannelState&);
     double listeningSecondsNow() const;
 
     juce::AudioDeviceManager deviceManager;
@@ -126,6 +134,7 @@ private:
     std::array<float, maxChannels> smoothedLevel {};
 
     std::atomic<bool> listening { false };
+    std::atomic<float> liveIntervalSec { 0.8f };
     juce::Time listenStartTime;
     std::atomic<juce::int64> listenStartMs { 0 };
 
