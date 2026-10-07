@@ -4,6 +4,18 @@
 #include <map>
 #include <vector>
 
+/** Ein Funkempfänger im Netzwerk. */
+struct WirelessDeviceConfig
+{
+    enum class Type { shure, sennheiserEwdx, simulated };
+
+    juce::String id;            // stabil, UUID
+    Type type = Type::shure;
+    juce::String host;          // IP-Adresse oder Hostname
+    juce::String label;         // frei, z. B. "Rack links"
+    int numChannels = 0;        // 0 = automatisch
+};
+
 /** Eine Person am Talkback (FOH, Monitor, Licht, Stage-Manager ...). */
 struct UserProfile
 {
@@ -14,13 +26,15 @@ struct UserProfile
     juce::Colour colour;
     int channel = -1;           // Index des Eingangs am Audio-Interface (0-basiert), -1 = keiner
     float thresholdDb = -45.0f; // Sprach-Schwelle (RMS, dBFS)
+    juce::String rfDeviceId;    // zugewiesene Funkstrecke (leer = keine)
+    int rfChannel = 0;          // Empfängerkanal 1..4
 };
 
 struct AppSettings
 {
     juce::String modelPath;
     juce::String language = "de";       // "de", "en", "auto" ...
-    juce::String keywords;              // "Timon, Timo"
+    juce::String keywords;              // "Tjark, Tjarki"
     bool fuzzyKeywords = true;
     bool flashAlert = true;
     bool recordAudio = true;
@@ -28,6 +42,7 @@ struct AppSettings
     bool accurateDecoding = false;      // Beam-Search statt Greedy
     juce::String recordingsDir;
     juce::String audioDeviceState;      // XML von AudioDeviceManager
+    std::vector<WirelessDeviceConfig> wirelessDevices;
 };
 
 /**

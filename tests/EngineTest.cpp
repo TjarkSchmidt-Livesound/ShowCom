@@ -2,7 +2,9 @@
 // Prüft Kanal-Zuordnung, FIFO, Sprach-Schnitt, Zeitstempel und WAV-Mitschnitt.
 
 #include "AudioEngine.h"
+#include "Wireless.h"
 #include <cstdio>
+#include <cstring>
 
 namespace
 {
@@ -122,14 +124,163 @@ namespace
     }
 }
 
+namespace
+{
+    // Simulierter Shure ULX-D4D im Netzwerk
+    class FakeShure : public juce::Thread
+    {
+    public:
+        explicit FakeShure (int p) : Thread ("fake shure"), port (p) { listener.createListener (port, "127.0.0.1"); startThread(); }
+        ~FakeShure() override { signalThreadShouldExit(); listener.close(); if (client) client->close(); stopThread (2000); }
+
+        juce::String received;
+
+    private:
+        void run() override
+        {
+            client.reset (listener.waitForNextConnection());
+            if (client == nullptr) return;
+
+            char buf[1024];
+            bool replied = false;
+
+            while (! threadShouldExit() && client->isConnected())
+            {
+                if (client->waitUntilReady (true, 100) > 0)
+                {
+                    const int n = client->read (buf, sizeof (buf), false);
+                    if (n <= 0) break;
+                    received += juce::String::fromUTF8 (buf, n);
+                }
+
+                if (! replied && received.contains ("GET 0 ALL"))
+                {
+                    send ("< REP MODEL {ULXD4D                          } >"
+                          "< REP 1 CHAN_NAME {HH01    } >< REP 1 TX_TYPE ULXD2 >< REP 1 BATT_BARS 004 >"
+                          "< REP 1 BATT_CHARGE 087 >< REP 1 BATT_RUN_TIME 00312 >< REP 1 FREQUENCY 470125 >"
+                          "< REP 2 CHAN_NAME {BP02    } >< REP 2 TX_TYPE UNKN >< REP 2 FREQUENCY 471300 >");
+                    replied = true;
+                }
+
+                if (replied)
+                    send ("< SAMPLE 1 ALL AB 078 060 >");
+            }
+        }
+
+        void send (const char* s)   { client->write (s, (int) strlen (s)); }
+
+        juce::StreamingSocket listener;
+        std::unique_ptr<juce::StreamingSocket> client;
+        int port;
+    };
+
+    // Simulierter Sennheiser EW-DX EM 2 (SSCv1, UDP)
+    class FakeEwdx : public juce::Thread
+    {
+    public:
+        explicit FakeEwdx (int p) : Thread ("fake ewdx"), sock (false) { sock.bindToPort (p, "127.0.0.1"); startThread(); }
+        ~FakeEwdx() override { signalThreadShouldExit(); sock.shutdown(); stopThread (2000); }
+
+        int subscriptions = 0;
+
+    private:
+        void run() override
+        {
+            char buf[4096];
+            while (! threadShouldExit())
+            {
+                if (sock.waitUntilReady (true, 100) <= 0) continue;
+                juce::String ip; int port = 0;
+                const int n = sock.read (buf, sizeof (buf), false, ip, port);
+                if (n <= 0) continue;
+
+                const auto msg = juce::String::fromUTF8 (buf, n);
+                if (! msg.contains ("subscribe")) continue;
+                ++subscriptions;
+
+                const char* replies[] = {
+                    R"({"osc":{"state":{"subscribe":[{"#":{"lifetime":60},"rx1":{"name":"VOX 1","frequency":548000,"mute":false}}]}}})",
+                    R"({"mates":{"tx1":{"battery":{"gauge":80,"lifetime":372,"type":"Battery"},"type":"SKM","mute":false}}})",
+                    R"({"m":{"rx1":{"rsqi":92,"divi":2}}})",
+                    R"({"m":{"rx2":{"rsqi":0,"divi":0}}})",
+                };
+                for (auto* r : replies)
+                    sock.write (ip, port, r, (int) strlen (r));
+            }
+        }
+
+        juce::DatagramSocket sock;
+    };
+
+    template <typename Fn>
+    bool waitFor (Fn&& condition, int ms)
+    {
+        for (int t = 0; t < ms; t += 50)
+        {
+            if (condition()) return true;
+            juce::Thread::sleep (50);
+        }
+        return condition();
+    }
+
+    void testWireless()
+    {
+        {
+            FakeShure fake (22020);
+            WirelessDeviceConfig c;
+            c.id = "shure"; c.type = WirelessDeviceConfig::Type::shure; c.host = "127.0.0.1:22020";
+            ShureClient client (c);
+
+            const bool ok = waitFor ([&] { auto s = client.snapshot(); return s.count (1) && s[1].batteryPercent == 87 && ! std::isnan (s[1].rfDbm); }, 4000);
+            check (ok, "Shure: Verbindung, Akku und HF-Pegel empfangen");
+            check (client.isOnline(), "Shure: Status online");
+            check (fake.received.contains ("METER_RATE"), "Shure: Meter-Rate angefordert");
+
+            auto s = client.snapshot();
+            if (ok)
+            {
+                std::printf ("      Kanal 1: %s, %d %%, %d min, %.3f MHz, %.0f dBm, Modell %s\n", s[1].name.c_str(),
+                             s[1].batteryPercent, s[1].batteryMinutes, s[1].frequencyKHz / 1000.0, s[1].rfDbm,
+                             client.getModel().toRawUTF8());
+                check (s[1].name == "HH01" && s[1].batteryMinutes == 312 && std::abs (s[1].rfDbm + 50.0f) < 0.1f, "Shure: Werte korrekt umgerechnet");
+                check (s.count (2) && ! s[2].txOn, "Shure: ausgeschalteter Sender erkannt");
+            }
+        }
+        {
+            FakeEwdx fake (24545);
+            WirelessDeviceConfig c;
+            c.id = "ewdx"; c.type = WirelessDeviceConfig::Type::sennheiserEwdx; c.host = "127.0.0.1:24545"; c.numChannels = 2;
+            SennheiserClient client (c);
+
+            const bool ok = waitFor ([&] { auto s = client.snapshot(); return s.count (1) && s[1].batteryPercent == 80 && s[1].rfQualityPercent == 92 && s[1].frequencyKHz > 0; }, 4000);
+            check (ok, "Sennheiser EW-DX: Abo, Akku, Signalqualität und Frequenz empfangen");
+
+            auto s = client.snapshot();
+            if (ok)
+            {
+                std::printf ("      Kanal 1: %s, %d %%, %d min, %.3f MHz, RSQI %d %%, Antenne %s\n", s[1].name.c_str(),
+                             s[1].batteryPercent, s[1].batteryMinutes, s[1].frequencyKHz / 1000.0, s[1].rfQualityPercent, s[1].antenna.c_str());
+                check (s[1].name == "VOX 1" && s[1].batteryMinutes == 372 && s[1].antenna == "B" && s[1].txOn, "Sennheiser: Werte korrekt");
+                check (s.count (2) && ! s[2].txOn, "Sennheiser: Kanal ohne Sender erkannt");
+            }
+            check (fake.subscriptions >= 4, "Sennheiser: ein Abo pro Kanal gesendet");
+        }
+    }
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI init;
 
+    testWireless();
+
     AudioEngine engine;
     engine.getDeviceManager().addAudioDeviceType (std::make_unique<FakeType>());
-    engine.getDeviceManager().setCurrentAudioDeviceType ("Fake", true);
     engine.initialise ({});
+    // Erst nach initialise() umschalten: sonst wählt JUCE ggf. das System-Interface (CoreAudio/WASAPI)
+    engine.getDeviceManager().setCurrentAudioDeviceType ("Fake", true);
+    check (engine.getDeviceManager().getCurrentAudioDevice() != nullptr
+           && engine.getDeviceManager().getCurrentAudioDevice()->getTypeName() == "Fake", "simuliertes Interface aktiv");
 
     // Nur Eingang 1 aktiv: die Engine muss Eingang 3 für die Zuweisung selbst einschalten
     {

@@ -1,8 +1,10 @@
 #include "AppState.h"
 
+#include <iterator>
+
 namespace
 {
-    constexpr int avatarSize = 256;
+    constexpr int avatarSize = 512;
 
     juce::File settingsFile()   { return AppState::getAppDataDir().getChildFile ("settings.json"); }
 }
@@ -77,6 +79,26 @@ void AppState::load()
             settings.accurateDecoding = flag ("accurateDecoding", false);
         }
 
+        settings.wirelessDevices.clear();
+
+        if (auto* arr = root->getProperty ("wireless").getArray())
+        {
+            for (auto& v : *arr)
+            {
+                WirelessDeviceConfig d;
+                d.id          = v["id"].toString();
+                d.host        = v["host"].toString();
+                d.label       = v["label"].toString();
+                d.numChannels = v.hasProperty ("channels") ? (int) v["channels"] : 0;
+                const auto type = v["type"].toString();
+                d.type = type == "sennheiser-ewdx" ? WirelessDeviceConfig::Type::sennheiserEwdx
+                                                   : WirelessDeviceConfig::Type::shure;
+                if (d.id.isEmpty())
+                    d.id = juce::Uuid().toString();
+                settings.wirelessDevices.push_back (d);
+            }
+        }
+
         users.clear();
 
         if (auto* arr = root->getProperty ("users").getArray())
@@ -90,6 +112,8 @@ void AppState::load()
                 u.avatarFile  = v["avatar"].toString();
                 u.channel     = v.hasProperty ("channel") ? (int) v["channel"] : -1;
                 u.thresholdDb = v.hasProperty ("thresholdDb") ? (float) (double) v["thresholdDb"] : -45.0f;
+                u.rfDeviceId  = v["rfDevice"].toString();
+                u.rfChannel   = v.hasProperty ("rfChannel") ? (int) v["rfChannel"] : 0;
                 u.colour      = v.hasProperty ("colour") ? juce::Colour::fromString (v["colour"].toString())
                                                          : paletteColour ((int) users.size());
 
@@ -131,13 +155,32 @@ void AppState::save() const
         o->setProperty ("channel",     u.channel);
         o->setProperty ("thresholdDb", u.thresholdDb);
         o->setProperty ("colour",      u.colour.toString());
+        o->setProperty ("rfDevice",    u.rfDeviceId);
+        o->setProperty ("rfChannel",   u.rfChannel);
         arr.add (juce::var (o));
+    }
+
+    juce::Array<juce::var> wireless;
+
+    for (auto& d : settings.wirelessDevices)
+    {
+        if (d.type == WirelessDeviceConfig::Type::simulated)
+            continue;
+
+        auto* o = new juce::DynamicObject();
+        o->setProperty ("id",       d.id);
+        o->setProperty ("type",     d.type == WirelessDeviceConfig::Type::sennheiserEwdx ? "sennheiser-ewdx" : "shure");
+        o->setProperty ("host",     d.host);
+        o->setProperty ("label",    d.label);
+        o->setProperty ("channels", d.numChannels);
+        wireless.add (juce::var (o));
     }
 
     auto* root = new juce::DynamicObject();
     root->setProperty ("version", 1);
     root->setProperty ("settings", juce::var (s));
     root->setProperty ("users", arr);
+    root->setProperty ("wireless", wireless);
 
     // Erst in Temp-Datei schreiben, dann ersetzen: kein kaputtes settings.json bei Absturz
     juce::TemporaryFile tmp (settingsFile());

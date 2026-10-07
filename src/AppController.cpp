@@ -124,6 +124,7 @@ void AppController::applyState()
         assignments.push_back (a);
     }
     engine.setAssignments (assignments);
+    wireless.setDevices (s.wirelessDevices);
 
     Transcriber::Options o;
     o.model = s.modelPath.isNotEmpty() ? juce::File (s.modelPath) : juce::File();
@@ -202,8 +203,40 @@ void AppController::injectTestMention()
     transcript.add (std::move (e));
 }
 
+AppController::RfInfo AppController::getRfInfo (const UserProfile& u) const
+{
+    RfInfo info;
+    auto deviceId = u.rfDeviceId;
+    int channel = u.rfChannel;
+
+    if (deviceId.isEmpty() && demoMode)
+    {
+        const auto& users = state.getUsers();
+        for (size_t i = 0; i < users.size(); ++i)
+            if (users[i].id == u.id)
+                channel = (int) (i % 6) + 1;
+
+        deviceId = WirelessManager::demoDeviceId;
+    }
+
+    if (deviceId.isEmpty() || channel <= 0)
+        return info;
+
+    info.assigned = true;
+    const auto status = wireless.getStatus (deviceId);
+    info.online = status.online;
+    info.deviceName = status.model;
+    info.known = wireless.getChannel (deviceId, channel, info.state);
+    info.history = wireless.getHistory (deviceId, channel);
+    return info;
+}
+
 void AppController::injectDemoConversation()
 {
+    demoMode = true;
+    wireless.setDemoDevice (true);
+    applyState();
+
     const auto& users = state.getUsers();
     if (users.empty())
         return;
@@ -212,7 +245,7 @@ void AppController::injectDemoConversation()
     keywords.addTokens (state.getSettings().keywords, ",;\n", "");
     keywords.trim();
     keywords.removeEmptyStrings();
-    const auto me = keywords.isEmpty() ? juce::String ("Timon") : keywords[0];
+    const auto me = keywords.isEmpty() ? juce::String ("Tjark") : keywords[0];
 
     const char* lines[] = {
         "Check, check, eins zwei. Hört mich jemand auf dem Talkback?",

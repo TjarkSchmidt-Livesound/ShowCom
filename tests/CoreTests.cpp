@@ -2,6 +2,7 @@
 
 #include "KeywordMatcher.h"
 #include "SpeechSegmenter.h"
+#include "ShureParser.h"
 
 #include <cmath>
 #include <cstdio>
@@ -136,11 +137,67 @@ static void testSegmenter()
     CHECK (out.size() == 1);
 }
 
+static void testShure()
+{
+    {
+        // ULX-D: Antwort in zwei TCP-Paketen zerteilt, gepolsterter Name
+        ShureParser p;
+        p.feed ("< REP MODEL {ULXD4Q                          } >< REP 1 CHAN_NAME {HH01    } >< REP 1 BATT_BA");
+        auto changed = p.feed ("RS 004 >< REP 1 BATT_RUN_TIME 00479 >< REP 1 FREQUENCY 470125 >"
+                               "< REP 1 TX_TYPE ULXD2 >< REP 1 BATT_CHARGE 096 >< SAMPLE 1 ALL AB 081 040 >");
+        const auto& s = p.getChannels().at (1);
+        CHECK (p.getFamily() == ShureParser::Family::ulxd);
+        CHECK (changed.count (1) == 1);
+        CHECK (s.name == "HH01");
+        CHECK (s.batteryBars == 4 && s.batteryPercent == 96 && s.batteryMinutes == 479);
+        CHECK (s.frequencyKHz == 470125);
+        CHECK (s.txOn && s.txModel == "ULXD2");
+        CHECK (std::abs (s.rfDbm - (-47.0f)) < 0.01f);      // 081 - 128
+        CHECK (std::abs (s.audioDb - (-10.0f)) < 0.01f);    // 040 - 50
+        CHECK (s.antenna == "AB");
+
+        // Sender aus: Akkuwerte verschwinden
+        p.feed ("< REP 1 TX_TYPE UNKN >");
+        CHECK (! p.getChannels().at (1).txOn);
+        CHECK (p.getChannels().at (1).batteryBars == -1);
+        CHECK (p.getChannels().at (1).batteryPercentEstimate() == -1);
+    }
+    {
+        // SLX-D: andere Schlüssel und Offsets
+        ShureParser p;
+        p.feed ("< REP 2 TX_MODEL SLXD2 >< REP 2 TX_BATT_BARS 003 >< REP 2 TX_BATT_MINS 65534 >"
+                "< REP 2 FREQUENCY 0602125 >< REP 2 RSSI 1 083 >< REP 2 RSSI 2 090 >");
+        const auto& s = p.getChannels().at (2);
+        CHECK (p.getFamily() == ShureParser::Family::slxd);
+        CHECK (s.batteryBars == 3 && s.batteryMinutes == -1);   // 65534 = wird berechnet
+        CHECK (s.batteryPercentEstimate() == 60);
+        CHECK (s.frequencyKHz == 602125);
+        CHECK (std::abs (s.rfDbm - (-30.0f)) < 0.01f);           // stärkere Antenne: 090 - 120
+    }
+    {
+        // Axient Digital: Meter mit 9 Feldern
+        ShureParser p;
+        p.feed ("< REP 1 TX_MODEL AD2 >< REP 1 TX_BATT_CHARGE_PERCENT 255 >< SAMPLE 1 ALL 005 031 102 102 BB 31 086 31 065 >");
+        const auto& s = p.getChannels().at (1);
+        CHECK (p.getFamily() == ShureParser::Family::axientDigital);
+        CHECK (s.batteryPercent == -1);
+        CHECK (std::abs (s.rfDbm - (-34.0f)) < 0.01f);           // max(086, 065) - 120
+        CHECK (std::abs (s.audioDb - (-18.0f)) < 0.01f);
+    }
+    {
+        ShureParser p;
+        CHECK (p.feed ("garbage without brackets").empty());
+        CHECK (p.feed ("< ERR >").empty());
+        CHECK (p.getChannels().empty());
+    }
+}
+
 int main()
 {
     testNormalise();
     testMatcher();
     testSegmenter();
+    testShure();
 
     if (failures == 0)
         std::printf ("All tests passed.\n");

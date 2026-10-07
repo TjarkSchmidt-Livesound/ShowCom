@@ -449,7 +449,7 @@ bool AudioEngine::isChannelActive (int channel) const
 juce::String AudioEngine::getDeviceDescription() const
 {
     if (auto* d = deviceManager.getCurrentAudioDevice())
-        return d->getTypeName() + ": " + d->getName() + "  ·  "
+        return d->getTypeName() + ": " + d->getName() + juce::String::fromUTF8 ("  ·  ")
              + juce::String (d->getCurrentSampleRate() / 1000.0, 1) + " kHz";
 
     return "Kein Audio-Interface";

@@ -132,7 +132,7 @@ void Transcriber::loadModelIfNeeded()
     loadedWithGpu = opts.useGpu;
     modelState.store (ModelState::ready);
     statusText = opts.model.getFileNameWithoutExtension().replace ("ggml-", "")
-               + (cparams.use_gpu ? " · GPU" : " · CPU");
+               + (cparams.use_gpu ? juce::String::fromUTF8 (" · GPU") : juce::String::fromUTF8 (" · CPU"));
 }
 
 //==============================================================================

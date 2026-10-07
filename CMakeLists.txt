@@ -44,12 +44,18 @@ FetchContent_Declare(whisper
 
 FetchContent_MakeAvailable(juce whisper)
 
+# Alle eigenen Quelltexte sind UTF-8 (Umlaute in Texten)
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
+
 # ------------------------------------------------------------------------------
 # Core library (no GUI) – shared by the app and the tests
 # ------------------------------------------------------------------------------
 add_library(tbs_core STATIC
     src/core/KeywordMatcher.cpp
-    src/core/SpeechSegmenter.cpp)
+    src/core/SpeechSegmenter.cpp
+    src/core/ShureParser.cpp)
 target_include_directories(tbs_core PUBLIC src/core)
 target_compile_features(tbs_core PUBLIC cxx_std_17)
 set_target_properties(tbs_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -69,6 +75,8 @@ target_sources(ShowCom PRIVATE
     src/Main.cpp
     src/AppState.cpp
     src/AppController.cpp
+    src/Wireless.cpp
+    src/ui/BoardView.cpp
     src/AudioEngine.cpp
     src/Transcriber.cpp
     src/TranscriptModel.cpp
@@ -85,11 +93,6 @@ target_compile_definitions(ShowCom PRIVATE
     JUCE_USE_CAMERA=0
     JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:ShowCom,JUCE_PRODUCT_NAME>"
     JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:ShowCom,JUCE_VERSION>")
-
-if(MSVC)
-    target_compile_options(ShowCom PRIVATE /utf-8)
-    target_compile_options(tbs_core PRIVATE /utf-8)
-endif()
 
 if(WIN32)
     if(TBS_ASIO_SDK_DIR)
@@ -139,10 +142,10 @@ if(TBS_BUILD_TESTS)
 
     # Integrationstest der Audio-Engine mit simuliertem Interface
     juce_add_console_app(tbs_engine_test PRODUCT_NAME "tbs_engine_test")
-    target_sources(tbs_engine_test PRIVATE tests/EngineTest.cpp src/AudioEngine.cpp)
+    target_sources(tbs_engine_test PRIVATE tests/EngineTest.cpp src/AudioEngine.cpp src/Wireless.cpp)
     target_include_directories(tbs_engine_test PRIVATE src)
     target_compile_definitions(tbs_engine_test PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_ALSA=0 JUCE_JACK=0)
     target_link_libraries(tbs_engine_test PRIVATE tbs_core
-        juce::juce_audio_devices juce::juce_audio_formats juce::juce_recommended_config_flags)
+        juce::juce_audio_devices juce::juce_audio_formats juce::juce_gui_basics juce::juce_recommended_config_flags)
     add_test(NAME engine COMMAND tbs_engine_test)
 endif()

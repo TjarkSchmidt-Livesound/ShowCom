@@ -2,12 +2,14 @@
 
 **Talkback-Log für den Livesound-Betrieb** – Mitschnitt und Live-Transkription des Talkbacks, für Windows (ASIO) und macOS (CoreAudio).
 
-![Konversation mit Namens-Alarm](docs/konversation.png)
+![Board mit Personen-Kacheln, Akku- und HF-Anzeige](docs/board.png)
 
+- **Board im RF-Board-Stil**: Pro Person eine hohe Kachel mit Foto, Lichtstrahlen in ihrer Farbe, Akku oben rechts, letzter Ansage, Verlauf von HF-Signal und Talkback-Pegel sowie Frequenz, Restlaufzeit und dBm. Warnungen wie *Akku kritisch*, *Akku niedrig*, *Schwaches Signal* oder *Sender aus* erscheinen direkt auf der Kachel.
+- **Funkempfänger im Netzwerk**: Shure ULX-D, QLX-D, SLX-D und Axient Digital (TCP 2202) sowie Sennheiser EW-DX EM 2/EM 4 (SSCv1, UDP 45). Jeder Person wird ihr Funkkanal zugewiesen.
 - **Eine Person pro Eingang**: Jedes Talkback-Mikro liegt auf einem eigenen Kanal des Audio-Interfaces. Dadurch ist immer eindeutig, wer gesprochen hat – ohne fehleranfällige Stimmerkennung.
 - **Benutzer mit Avataren**: Name, Funktion (FOH, Monitor, Licht …), Farbe, Profilbild (Klick oder Drag & Drop), Eingang und Sprach-Schwelle mit Live-Pegel.
 - **Tabs**: *Konversation* (alle chronologisch), *Erwähnungen*, ein Tab pro Person, *Personen*, *Einstellungen*.
-- **Namens-Alarm**: Dein Name (plus Varianten) wird in jedem Transkript gesucht – ohne Groß/klein, mit Umlaut-Faltung und optional unscharf („Timmon“ → „Timon“). Bei einem Treffer blinkt oben ein großes Banner, der Beitrag wird markiert, ein Klick springt hin.
+- **Namens-Alarm**: Dein Name (plus Varianten) wird in jedem Transkript gesucht – ohne Groß/klein, mit Umlaut-Faltung und optional unscharf („Tjarck“ → „Tjark“). Bei einem Treffer blinkt oben ein großes Banner, der Beitrag wird markiert, ein Klick springt hin.
 - **Lokal & offline**: Spracherkennung mit [whisper.cpp](https://github.com/ggml-org/whisper.cpp), auf dem Mac per GPU (Metal). Kein Internet am Venue nötig, keine Daten in der Cloud.
 - **Mitschnitt**: Pro Person eine WAV-Datei (24 Bit mono) plus `transcript.txt` (wird live geschrieben) und `transcript.json` mit Zeitstempeln, die auf die Position in der WAV-Datei zeigen.
 - **Sicher am Pult**: Die Software öffnet das Interface nur mit Eingängen und gibt nie Audio aus.
@@ -38,7 +40,9 @@ TranscriptModel → Namenssuche (KeywordMatcher) → GUI (JUCE)
 | `src/AppController.*` | Verdrahtung, Sessions |
 | `src/ui/*` | Oberfläche |
 
-![Personen mit Avatar, Eingang und Sprach-Schwelle](docs/personen.png)
+| Konversation | Personen |
+|---|---|
+| ![Konversation](docs/konversation.png) | ![Personen](docs/personen.png) |
 
 ## Bauen
 
@@ -90,17 +94,33 @@ ctest --test-dir build -C Release --output-on-failure
 ```
 
 - `core`: Namenssuche (Umlaute, Mehrwort-Namen, Genitiv, unscharf) und Sprach-Gate.
-- `engine`: Die komplette Audio-Engine mit einem simulierten 8-Kanal-Interface – automatische Kanal-Aktivierung, Schnitt, Zeitstempel, WAV-Inhalt.
+- `core` prüft außerdem den Shure-Parser mit Antworten von ULX-D, SLX-D und Axient Digital.
+- `engine`: Die komplette Audio-Engine mit einem simulierten 8-Kanal-Interface – automatische Kanal-Aktivierung, Schnitt, Zeitstempel, WAV-Inhalt – sowie die Netzwerk-Clients gegen einen simulierten Shure-ULX-D- und Sennheiser-EW-DX-Empfänger.
 
 ## Erste Schritte
 
 1. **Einstellungen → Spracherkennung**: Modell wählen und *Herunterladen*. Empfohlen: `large-v3-turbo q5` (574 MB, gute Qualität bei Deutsch). Auf schwachen Rechnern `small`. Sprache: Deutsch.
 2. **Einstellungen → Audio-Interface**: unter Windows Typ **ASIO** und dein Interface wählen, unter macOS das CoreAudio-Gerät.
 3. **Personen**: Für jede Person *+ Person*, Name, Funktion, Avatar, **Eingang** wählen. Die **Sprach-Schwelle** (gelber Strich) knapp über das Grundrauschen bzw. Bühnen-Übersprechen stellen – der Pegelbalken zeigt live, ob Sprache erkannt wird.
-4. **Einstellungen → Mein Name**: deinen Namen und Varianten eintragen, z. B. `Timon, Timo, Monitor-Timon`. Mit *Alarm testen* prüfen.
+4. **Einstellungen → Mein Name**: deinen Namen und Varianten eintragen, z. B. `Tjark, Tjarki, Monitor-Tjark`. Mit *Alarm testen* prüfen.
 5. Oben **Session starten**. Mitschnitte landen in `Dokumente/ShowCom/<Datum_Uhrzeit>/`.
 
-Zum Ausprobieren ohne Interface: Programm mit `--demo` starten (füllt die Anzeige mit Beispiel-Talkback, wenn Personen angelegt sind).
+Zum Ausprobieren ohne Interface und ohne Funk: Programm mit `--demo` starten. Das füllt die Anzeige mit Beispiel-Talkback und simuliert sechs Funkstrecken (wenn Personen angelegt sind).
+
+## Funkempfänger anbinden
+
+Unter **Einstellungen → Funkempfänger** jeden Empfänger mit Typ und IP-Adresse eintragen (optional mit Port, z. B. `192.168.1.50:2202`). Der Status-Punkt wird grün, sobald Daten kommen. Danach unter **Personen → Funkstrecke** den passenden Kanal wählen – die Liste zeigt die Kanalnamen, die am Empfänger eingestellt sind.
+
+| Hersteller | Geräte | Protokoll | Am Gerät einstellen |
+|---|---|---|---|
+| Shure | ULX-D, QLX-D, SLX-D, Axient Digital | TCP 2202, ASCII-Befehle | nichts (Standard). Rechner und Empfänger im selben Netz. |
+| Sennheiser | EW-DX EM 2, EM 2 Dante, EM 4 Dante | Sound Control Protocol v1, JSON über UDP 45 | Drittanbieter-Zugriff **„Legacy (SSCv1)“** aktivieren (Control Cockpit → Gerät → *Access*) |
+
+Angezeigt werden – je nachdem, was das Gerät liefert – Akku in % bzw. Balken, Restlaufzeit, Frequenz, HF-Pegel (Shure, dBm) bzw. Signalqualität (Sennheiser, %), aktive Antenne, Sendertyp, Stummschaltung und ob der Sender an ist. ShowCom fragt nur ab; es ändert keine Einstellungen am Empfänger (einzige Ausnahme: bei Shure wird die Meter-Rate auf 1 s gesetzt, damit der Pegelverlauf läuft).
+
+Hinweis: Das neuere, verschlüsselte SSCv2 der EW-DX (HTTPS mit Passwort) ist noch nicht eingebaut; dafür bitte vorerst SSCv1 aktivieren.
+
+![Funkempfänger in den Einstellungen](docs/funkempfaenger.png)
 
 ## Praxis-Tipps
 

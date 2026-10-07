@@ -42,6 +42,7 @@ public:
 
     void setUser (const juce::String& id);
     void refreshChannels();
+    void refreshRfList();
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -64,10 +65,14 @@ private:
                 thresholdLabel { {}, "Sprach-Schwelle" }, colourLabel { {}, "Farbe" };
     juce::TextEditor nameEditor, roleEditor;
     juce::ComboBox channelBox;
+    juce::Label rfLabel { {}, "Funkstrecke" };
+    juce::ComboBox rfBox;
+    std::vector<WirelessManager::ChannelRef> rfRefs;
     juce::Slider thresholdSlider { juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight };
-    juce::Rectangle<int> meterArea, swatchArea, hintArea;
+    juce::Rectangle<int> meterArea, swatchArea, hintArea, rfStatusArea;
     juce::TextButton deleteButton { "Person entfernen" };
     juce::String channelWarning;
+    int rfRefreshTick = 0;
 };
 
 //==============================================================================

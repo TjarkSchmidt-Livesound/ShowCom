@@ -2,20 +2,21 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
-/** Dunkles, blendarmes Design für den FOH-Platz. */
+/** Dunkles, blendarmes Design für den FOH-Platz (Stil: RF-Board). */
 namespace Theme
 {
-    const juce::Colour background   { 0xff111317 };
-    const juce::Colour panel        { 0xff181b21 };
-    const juce::Colour panelRaised  { 0xff20242c };
-    const juce::Colour border       { 0xff2c313b };
-    const juce::Colour text         { 0xffe4e7ec };
-    const juce::Colour textDim      { 0xff8a92a0 };
-    const juce::Colour textFaint    { 0xff5c6370 };
-    const juce::Colour accent       { 0xff4fc3f7 };
-    const juce::Colour record       { 0xffe5484d };
+    // Farbwelt angelehnt an RF-Boards: tiefes Navy, Teal für "alles gut", Amber/Rot für Warnungen
+    const juce::Colour background   { 0xff12162b };
+    const juce::Colour panel        { 0xff1a2040 };
+    const juce::Colour panelRaised  { 0xff242b52 };
+    const juce::Colour border       { 0xff323a68 };
+    const juce::Colour text         { 0xfff1f3fa };
+    const juce::Colour textDim      { 0xff9aa3c7 };
+    const juce::Colour textFaint    { 0xff626b94 };
+    const juce::Colour accent       { 0xff35d6b4 };
+    const juce::Colour record       { 0xffff4d6d };
     const juce::Colour alert        { 0xffffb020 };
-    const juce::Colour ok           { 0xff46c37b };
+    const juce::Colour ok           { 0xff35d6b4 };
 
     /** UTF-8-Literal -> juce::String (Quelltexte sind UTF-8, MSVC mit /utf-8). */
     inline juce::String txt (const char* utf8)     { return juce::String::fromUTF8 (utf8); }

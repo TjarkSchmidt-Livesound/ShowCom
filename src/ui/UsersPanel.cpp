@@ -94,7 +94,7 @@ void AvatarPicker::filesDropped (const juce::StringArray& files, int, int)
 //==============================================================================
 UserEditor::UserEditor (AppController& a) : app (a)
 {
-    for (auto* l : { &nameLabel, &roleLabel, &channelLabel, &thresholdLabel, &colourLabel })
+    for (auto* l : { &nameLabel, &roleLabel, &channelLabel, &rfLabel, &thresholdLabel, &colourLabel })
     {
         l->setFont (Theme::font (13.0f, true));
         l->setColour (juce::Label::textColourId, Theme::textDim);
@@ -117,6 +117,9 @@ UserEditor::UserEditor (AppController& a) : app (a)
 
     channelBox.onChange = [this] { commit(); };
     addAndMakeVisible (channelBox);
+
+    rfBox.onChange = [this] { commit(); };
+    addAndMakeVisible (rfBox);
 
     thresholdSlider.setRange (-72.0, -6.0, 1.0);
     thresholdSlider.setTextValueSuffix (" dB");
@@ -167,6 +170,7 @@ void UserEditor::setUser (const juce::String& id)
     roleEditor.setText (u->role, false);
     thresholdSlider.setValue (u->thresholdDb, juce::dontSendNotification);
     refreshChannels();
+    refreshRfList();
     repaint();
 }
 
@@ -209,6 +213,42 @@ void UserEditor::refreshChannels()
     repaint();
 }
 
+void UserEditor::refreshRfList()
+{
+    auto* u = app.state.findUser (userId);
+    if (u == nullptr || rfBox.isPopupActive())
+        return;
+
+    const juce::ScopedValueSetter<bool> svs (loading, true);
+    rfRefs = app.wireless.listChannels();
+
+    rfBox.clear (juce::dontSendNotification);
+    rfBox.addItem (Theme::txt ("– keine Funkstrecke –"), 1);
+
+    int selected = 1;
+    for (size_t i = 0; i < rfRefs.size(); ++i)
+    {
+        auto label = rfRefs[i].label;
+        for (auto& other : app.state.getUsers())
+            if (other.id != userId && other.rfDeviceId == rfRefs[i].deviceId && other.rfChannel == rfRefs[i].channel)
+                label << "   [" << other.name << "]";
+
+        rfBox.addItem (label, (int) i + 2);
+        if (rfRefs[i].deviceId == u->rfDeviceId && rfRefs[i].channel == u->rfChannel)
+            selected = (int) i + 2;
+    }
+
+    if (selected == 1 && u->rfDeviceId.isNotEmpty())
+    {
+        // Gerät gerade nicht in der Liste (gelöscht/umbenannt): Zuordnung trotzdem anzeigen
+        rfRefs.push_back ({ u->rfDeviceId, u->rfChannel, Theme::txt ("Gerät nicht gefunden · Kanal ") + juce::String (u->rfChannel) });
+        rfBox.addItem (rfRefs.back().label, (int) rfRefs.size() + 1);
+        selected = (int) rfRefs.size() + 1;
+    }
+
+    rfBox.setSelectedId (selected, juce::dontSendNotification);
+}
+
 UserProfile UserEditor::current() const
 {
     auto* u = app.state.findUser (userId);
@@ -224,6 +264,18 @@ void UserEditor::commit()
     u.name = nameEditor.getText().trim().isEmpty() ? u.name : nameEditor.getText().trim();
     u.role = roleEditor.getText().trim();
     u.channel = channelBox.getSelectedId() - 2;
+
+    const int rfIndex = rfBox.getSelectedId() - 2;
+    if (rfIndex >= 0 && rfIndex < (int) rfRefs.size())
+    {
+        u.rfDeviceId = rfRefs[(size_t) rfIndex].deviceId;
+        u.rfChannel = rfRefs[(size_t) rfIndex].channel;
+    }
+    else
+    {
+        u.rfDeviceId = {};
+        u.rfChannel = 0;
+    }
     u.thresholdDb = (float) thresholdSlider.getValue();
     app.state.updateUser (u);
     refreshChannels();
@@ -232,8 +284,15 @@ void UserEditor::commit()
 
 void UserEditor::timerCallback()
 {
-    if (isShowing())
-        repaint (meterArea.expanded (4, 30));
+    if (! isShowing())
+        return;
+
+    repaint (meterArea.expanded (4, 30));
+    repaint (rfStatusArea);
+
+    // Kanalnamen der Empfänger kommen erst nach dem Verbinden: Liste gelegentlich auffrischen
+    if (++rfRefreshTick % 60 == 0)
+        refreshRfList();
 }
 
 void UserEditor::mouseUp (const juce::MouseEvent& e)
@@ -275,6 +334,32 @@ void UserEditor::paint (juce::Graphics& g)
         g.drawText ((speaking ? txt ("● Sprache erkannt") : txt ("○ still"))
                         + "     Pegel " + juce::String (juce::roundToInt (level)) + " dBFS",
                     meterArea.translated (0, 14).withHeight (18), juce::Justification::centredLeft);
+    }
+
+    // Funkstrecke: Kurzstatus
+    if (u->rfDeviceId.isNotEmpty())
+    {
+        WirelessChannelState st;
+        const auto dev = app.wireless.getStatus (u->rfDeviceId);
+        juce::String line;
+
+        if (! dev.exists)              line = Theme::txt ("Empfänger ist nicht mehr eingerichtet");
+        else if (! dev.online)         line = dev.text;
+        else if (! app.wireless.getChannel (u->rfDeviceId, u->rfChannel, st)) line = "Warte auf Daten ...";
+        else if (! st.txOn)            line = "Sender aus";
+        else
+        {
+            const int b = st.batteryPercentEstimate();
+            line << (b >= 0 ? "Akku " + juce::String (b) + " %" : juce::String ("Akku ?"));
+            if (st.batteryMinutes >= 0) line << Theme::txt ("  ·  ") << (st.batteryMinutes / 60) << "h " << (st.batteryMinutes % 60) << "m";
+            if (! std::isnan (st.rfDbm)) line << Theme::txt ("  ·  ") << juce::roundToInt (st.rfDbm) << " dBm";
+            else if (st.rfQualityPercent >= 0) line << Theme::txt ("  ·  RF ") << st.rfQualityPercent << " %";
+            if (st.frequencyKHz > 0) line << Theme::txt ("  ·  ") << juce::String (st.frequencyKHz / 1000.0, 3) << " MHz";
+        }
+
+        g.setFont (Theme::font (13.0f));
+        g.setColour (dev.online ? Theme::textDim : Theme::alert);
+        g.drawText (line, rfStatusArea, juce::Justification::centredLeft, true);
     }
 
     // Farbauswahl
@@ -329,13 +414,18 @@ void UserEditor::resized()
 
     channelLabel.setBounds (b.removeFromTop (20));
     channelBox.setBounds (b.removeFromTop (34));
-    b.removeFromTop (14);
+    b.removeFromTop (10);
+
+    rfLabel.setBounds (b.removeFromTop (20));
+    rfBox.setBounds (b.removeFromTop (34));
+    rfStatusArea = b.removeFromTop (22);
+    b.removeFromTop (6);
 
     thresholdLabel.setBounds (b.removeFromTop (20));
     thresholdSlider.setBounds (b.removeFromTop (30));
     b.removeFromTop (6);
     meterArea = b.removeFromTop (10).withTrimmedRight (82);
-    b.removeFromTop (30);
+    b.removeFromTop (26);
 
     colourLabel.setBounds (b.removeFromTop (20));
     swatchArea = b.removeFromTop (34).withWidth (400);
@@ -436,7 +526,7 @@ void UsersPanel::paintListBoxItem (int row, juce::Graphics& g, int width, int he
 
     juce::String sub;
     if (u.role.isNotEmpty())
-        sub << u.role << "  ·  ";
+        sub << u.role << Theme::txt ("  ·  ");
     sub << (u.channel >= 0 ? "Eingang " + juce::String (u.channel + 1) : txt ("kein Eingang"));
 
     g.setColour (Theme::textDim);

@@ -96,7 +96,7 @@ void AlertBanner::paint (juce::Graphics& g)
 
     juce::String head;
     head << (keyword.isNotEmpty() ? keyword.toUpperCase() : juce::String ("DEIN NAME")) << txt (" ERWÄHNT")
-         << "   ·   " << speaker << (role.isNotEmpty() ? " (" + role + ")" : juce::String()) << "   ·   " << time;
+         << Theme::txt ("   ·   ") << speaker << (role.isNotEmpty() ? " (" + role + ")" : juce::String()) << Theme::txt ("   ·   ") << time;
     if (pendingCount > 0)
         head << "   (+" << pendingCount << " weitere)";
 
@@ -129,17 +129,27 @@ MainComponent::MainComponent (AppController& a) : app (a)
     tabs.setTabBarDepth (46);
     tabs.setOutline (0);
     tabs.setIndent (0);
+    tabs.addTab ("Board", Theme::panel, &board, false);
     tabs.addTab ("Konversation", Theme::panel, &conversation, false);
     tabs.addTab (txt ("Erwähnungen"), Theme::alert, &mentions, false);
     tabs.addTab ("Personen", Theme::panel, &usersPanel, false);
     tabs.addTab ("Einstellungen", Theme::panel, &settingsPanel, false);
     addAndMakeVisible (tabs);
 
+    board.onOpenUser = [this] (const juce::String& id)
+    {
+        for (auto& t : userTabs)
+            if (t.userId == id)
+                tabs.setCurrentTabIndex (indexOfTab (t.view.get()));
+    };
+
     syncUserTabs();
     transcriptReset();
 
-    // Beim allerersten Start direkt zur Einrichtung
-    if (app.state.getUsers().empty())
+    // Beim allerersten Start direkt zur Einrichtung (nicht im Demo-Modus)
+    if (juce::JUCEApplicationBase::getCommandLineParameters().contains ("--demo"))
+        tabs.setCurrentTabIndex (indexOfTab (&board));
+    else if (app.state.getUsers().empty())
         tabs.setCurrentTabIndex (indexOfTab (&usersPanel));
     else if (app.state.getSettings().modelPath.isEmpty())
         tabs.setCurrentTabIndex (indexOfTab (&settingsPanel));
@@ -179,7 +189,7 @@ int MainComponent::indexOfTab (juce::Component* c) const
 void MainComponent::syncUserTabs()
 {
     const auto& users = app.state.getUsers();
-    const int firstUserTab = 2;
+    const int firstUserTab = 3;   // Board, Konversation, Erwähnungen
 
     bool sameOrder = users.size() == userTabs.size();
     for (size_t i = 0; sameOrder && i < users.size(); ++i)

@@ -9,7 +9,7 @@
     - Groß-/Kleinschreibung egal, Umlaute werden gefaltet (ä -> ae, ß -> ss, é -> e ...),
       damit "Jürgen", "Juergen" und "jurgen" zusammenpassen.
     - Ganze Wörter: "Tim" matcht nicht in "Timing".
-    - Mehrwort-Begriffe ("Timon Schütt") werden als Wortfolge gesucht.
+    - Mehrwort-Begriffe ("Tjark Schmidt") werden als Wortfolge gesucht.
     - Optional unscharf: Bei Wörtern ab 5 Zeichen ist 1 Tippfehler erlaubt
       (Whisper schreibt Namen gern leicht anders, z. B. "Timmon").
 
@@ -29,7 +29,7 @@ public:
         bool exact = true;      // false = unscharfer Treffer
     };
 
-    /** Begriffe kommagetrennt oder zeilenweise, z. B. "Timon, Timo, Monitor-Timon". */
+    /** Begriffe kommagetrennt oder zeilenweise, z. B. "Tjark, Tjarki, Monitor-Tjark". */
     void setKeywords (const std::string& commaOrNewlineSeparated);
     void setKeywords (const std::vector<std::string>& keywords);
     void setFuzzy (bool shouldBeFuzzy)  { fuzzy = shouldBeFuzzy; }

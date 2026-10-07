@@ -238,16 +238,16 @@ void TranscriptView::paintUserHeader (juce::Graphics& g, juce::Rectangle<int> ar
     {
         const auto names = app.engine.getInputChannelNames();
         const auto chName = names[u->channel];
-        sub << (sub.isNotEmpty() ? "  ·  " : "") << "Eingang " << (u->channel + 1)
+        sub << (sub.isNotEmpty() ? Theme::txt ("  ·  ") : "") << "Eingang " << (u->channel + 1)
             << (chName.isNotEmpty() ? " (" + chName + ")" : juce::String());
     }
     else
     {
-        sub << (sub.isNotEmpty() ? "  ·  " : "") << "kein Eingang zugewiesen";
+        sub << (sub.isNotEmpty() ? Theme::txt ("  ·  ") : "") << "kein Eingang zugewiesen";
     }
 
     const int count = (int) rows.size();
-    sub << "  ·  " << count << (count == 1 ? " Beitrag" : juce::String (juce::CharPointer_UTF8 (" Beitr\xc3\xa4ge")));
+    sub << Theme::txt ("  ·  ") << count << (count == 1 ? " Beitrag" : juce::String (juce::CharPointer_UTF8 (" Beitr\xc3\xa4ge")));
 
     g.setColour (Theme::textDim);
     g.setFont (Theme::font (14.0f));
@@ -311,7 +311,7 @@ void TranscriptView::paintRow (juce::Graphics& g, const Row& r, const Transcript
     g.setColour (Theme::textFaint);
     juce::String meta;
     if (u != nullptr && u->role.isNotEmpty())
-        meta << u->role << "  ·  ";
+        meta << u->role << Theme::txt ("  ·  ");
     meta << e.time.formatted ("%H:%M:%S");
     g.drawText (meta, head, juce::Justification::centredLeft, true);
 

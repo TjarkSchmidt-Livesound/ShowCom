@@ -5,6 +5,7 @@
 #include "TranscriptView.h"
 #include "UsersPanel.h"
 #include "SettingsPanel.h"
+#include "BoardView.h"
 
 /** Großes, blinkendes Banner, wenn dein Name fällt. Klick = gesehen + hinspringen. */
 class AlertBanner : public juce::Component,
@@ -69,6 +70,7 @@ private:
     AlertBanner banner { app };
     juce::TabbedComponent tabs { juce::TabbedButtonBar::TabsAtTop };
 
+    BoardView board { app };
     TranscriptView conversation { app, TranscriptView::Filter::all };
     TranscriptView mentions { app, TranscriptView::Filter::mentions };
     UsersPanel usersPanel { app };

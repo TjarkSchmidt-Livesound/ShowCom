@@ -4,6 +4,7 @@
 #include "AudioEngine.h"
 #include "Transcriber.h"
 #include "TranscriptModel.h"
+#include "Wireless.h"
 
 /**
     Hält die Kernobjekte zusammen und verdrahtet sie:
@@ -23,6 +24,7 @@ public:
 
     AppState state;
     TranscriptModel transcript;
+    WirelessManager wireless;
     Transcriber transcriber;
     AudioEngine engine;
 
@@ -36,6 +38,16 @@ public:
 
     /** Füllt die Anzeige mit Beispiel-Talkback (Start mit --demo), um die Oberfläche ohne Audio zu testen. */
     void injectDemoConversation();
+
+    /** Funkstrecke einer Person (zugewiesen oder im Demo-Modus simuliert). */
+    struct RfInfo
+    {
+        bool assigned = false, online = false, known = false;
+        WirelessChannelState state;
+        const std::deque<float>* history = nullptr;
+        juce::String deviceName;
+    };
+    RfInfo getRfInfo (const UserProfile&) const;
 
     std::function<void()> onSessionStateChanged;
     std::function<void()> onAudioDeviceChanged;
@@ -51,4 +63,5 @@ private:
     bool appliedFuzzy = true;
     bool keywordsApplied = false;
     int closeWaitTicks = 0;
+    bool demoMode = false;
 };

@@ -32,6 +32,31 @@ private:
 };
 
 //==============================================================================
+/** Eine Zeile "Funkempfänger": Typ, IP-Adresse, Bezeichnung, Status. */
+class WirelessRow : public juce::Component
+{
+public:
+    explicit WirelessRow (const WirelessDeviceConfig&);
+
+    WirelessDeviceConfig config;
+    std::function<void (const WirelessDeviceConfig&)> onChange;
+    std::function<void()> onRemove;
+
+    void setStatus (const WirelessManager::DeviceStatus&);
+    void paint (juce::Graphics&) override;
+    void resized() override;
+
+private:
+    void commit();
+
+    juce::ComboBox typeBox;
+    juce::TextEditor hostEditor, labelEditor;
+    juce::TextButton removeButton { "Entfernen" };
+    juce::Label statusLabel;
+    bool online = false;
+};
+
+//==============================================================================
 class SettingsPanel : public juce::Component,
                       private juce::Timer
 {
@@ -69,6 +94,12 @@ private:
     // Audio
     juce::AudioDeviceSelectorComponent deviceSelector;
     juce::Label audioHint;
+
+    // Funkempfänger
+    void rebuildWirelessRows();
+    juce::Label wirelessHint;
+    juce::OwnedArray<WirelessRow> wirelessRows;
+    juce::TextButton addWirelessButton { txtInit ("+ Empfänger hinzufügen") };
 
     // Transkription
     juce::Label modelLabel, modelStatus;

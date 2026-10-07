@@ -83,6 +83,91 @@ void ModelDownloader::finished (juce::URL::DownloadTask* t, bool success)
 }
 
 //==============================================================================
+WirelessRow::WirelessRow (const WirelessDeviceConfig& c) : config (c)
+{
+    typeBox.addItem ("Shure", 1);
+    typeBox.addItem ("Sennheiser EW-DX", 2);
+    typeBox.setTooltip (Theme::txt ("Shure: ULX-D, QLX-D, SLX-D, Axient Digital  ·  Sennheiser: EW-DX EM 2 / EM 4"));
+    typeBox.setSelectedId (c.type == WirelessDeviceConfig::Type::sennheiserEwdx ? 2 : 1, juce::dontSendNotification);
+    typeBox.onChange = [this] { commit(); };
+    addAndMakeVisible (typeBox);
+
+    for (auto* ed : { &hostEditor, &labelEditor })
+    {
+        ed->setFont (Theme::font (15.0f));
+        ed->setIndents (8, 7);
+        ed->onReturnKey = [this] { commit(); };
+        ed->onFocusLost = [this] { commit(); };
+        addAndMakeVisible (*ed);
+    }
+
+    hostEditor.setText (c.host, false);
+    hostEditor.setTextToShowWhenEmpty ("IP-Adresse, z. B. 192.168.1.50", Theme::textFaint);
+    hostEditor.setInputRestrictions (64, "0123456789.:abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-");
+    labelEditor.setText (c.label, false);
+    labelEditor.setTextToShowWhenEmpty ("Bezeichnung, z. B. Rack links", Theme::textFaint);
+
+    removeButton.onClick = [this] { if (onRemove) onRemove(); };
+    addAndMakeVisible (removeButton);
+
+    statusLabel.setFont (Theme::font (12.0f));
+    statusLabel.setColour (juce::Label::textColourId, Theme::textDim);
+    addAndMakeVisible (statusLabel);
+}
+
+void WirelessRow::commit()
+{
+    auto c = config;
+    c.type = typeBox.getSelectedId() == 2 ? WirelessDeviceConfig::Type::sennheiserEwdx : WirelessDeviceConfig::Type::shure;
+    c.host = hostEditor.getText().trim();
+    c.label = labelEditor.getText().trim();
+
+    if (c.type != config.type || c.host != config.host || c.label != config.label)
+    {
+        config = c;
+        if (onChange)
+            onChange (c);
+    }
+}
+
+void WirelessRow::setStatus (const WirelessManager::DeviceStatus& st)
+{
+    online = st.online;
+    auto text = st.text;
+    if (st.online && st.model.isNotEmpty())
+        text = st.model.trim() + Theme::txt ("  ·  ") + text;
+
+    if (statusLabel.getText() != text)
+        statusLabel.setText (text, juce::dontSendNotification);
+
+    statusLabel.setColour (juce::Label::textColourId, st.online ? Theme::ok : Theme::alert);
+    repaint();
+}
+
+void WirelessRow::paint (juce::Graphics& g)
+{
+    g.setColour (Theme::background.withAlpha (0.5f));
+    g.fillRoundedRectangle (getLocalBounds().toFloat(), 8.0f);
+
+    g.setColour (online ? Theme::ok : Theme::alert);
+    g.fillEllipse (juce::Rectangle<float> (10.0f, 10.0f).withCentre ({ 16.0f, 22.0f }));
+}
+
+void WirelessRow::resized()
+{
+    auto b = getLocalBounds().reduced (10, 6).withTrimmedLeft (18);
+    auto top = b.removeFromTop (32);
+    removeButton.setBounds (top.removeFromRight (100));
+    top.removeFromRight (8);
+    typeBox.setBounds (top.removeFromLeft (juce::jmin (190, top.getWidth() / 3)));
+    top.removeFromLeft (8);
+    hostEditor.setBounds (top.removeFromLeft (top.getWidth() / 2));
+    top.removeFromLeft (8);
+    labelEditor.setBounds (top);
+    statusLabel.setBounds (b.withTrimmedTop (2));
+}
+
+//==============================================================================
 SettingsPanel::SettingsPanel (AppController& a)
     : app (a),
       deviceSelector (a.engine.getDeviceManager(), 0, AudioEngine::maxChannels, 0, 0, false, false, false, false)
@@ -114,6 +199,26 @@ SettingsPanel::SettingsPanel (AppController& a)
                            ), juce::dontSendNotification);
     styleHint (audioHint);
     content.addAndMakeVisible (audioHint);
+
+    // --- Funkempfänger ------------------------------------------------------
+    wirelessHint.setText (txt ("Empfänger im selben Netzwerk wie dieser Rechner. Shure: Steuerung über TCP-Port 2202 "
+                               "(Standard, nichts einzustellen). Sennheiser EW-DX: im Empfänger bzw. in Control Cockpit unter "
+                               "„Access“ den Drittanbieter-Zugriff „Legacy (SSCv1)“ aktivieren (UDP-Port 45). "
+                               "Die Zuordnung Person ↔ Funkkanal erfolgt unter „Personen“."),
+                          juce::dontSendNotification);
+    styleHint (wirelessHint);
+    content.addAndMakeVisible (wirelessHint);
+
+    addWirelessButton.onClick = [this]
+    {
+        store ([] (AppSettings& s)
+        {
+            WirelessDeviceConfig d;
+            d.id = juce::Uuid().toString();
+            s.wirelessDevices.push_back (d);
+        });
+    };
+    content.addAndMakeVisible (addWirelessButton);
 
     // --- Transkription -----------------------------------------------------
     modelLabel.setFont (Theme::font (15.0f, true));
@@ -167,7 +272,7 @@ SettingsPanel::SettingsPanel (AppController& a)
     content.addAndMakeVisible (accurateToggle);
 
     // --- Mein Name ---------------------------------------------------------
-    keywordsHint.setText (txt ("Dein Name und Varianten, kommagetrennt – z. B. „Timon, Timo, Monitor-Timon“. "
+    keywordsHint.setText (txt ("Dein Name und Varianten, kommagetrennt – z. B. „Tjark, Tjarki, Monitor-Tjark“. "
                                "Wird einer davon erwähnt, erscheint oben ein Alarm und der Beitrag wird markiert. "
                                "Die Namen helfen außerdem der Spracherkennung, sie richtig zu schreiben."),
                           juce::dontSendNotification);
@@ -242,6 +347,9 @@ void SettingsPanel::loadFromState()
     fuzzyToggle.setToggleState (s.fuzzyKeywords, juce::dontSendNotification);
     flashToggle.setToggleState (s.flashAlert, juce::dontSendNotification);
     recordToggle.setToggleState (s.recordAudio, juce::dontSendNotification);
+
+    if ((int) s.wirelessDevices.size() != wirelessRows.size())
+        rebuildWirelessRows();
     folderLabel.setText (app.state.getRecordingsDir().getFullPathName(), juce::dontSendNotification);
 }
 
@@ -267,6 +375,9 @@ void SettingsPanel::timerCallback()
 
     downloader.syncProgress();
 
+    for (auto* row : wirelessRows)
+        row->setStatus (app.wireless.getStatus (row->config.id));
+
     auto status = app.transcriber.getModelStatusText();
     if (app.transcriber.getModelState() == Transcriber::ModelState::none)
         status = txt ("Unten ein Modell herunterladen oder eine vorhandene ggml-Datei wählen.");
@@ -274,6 +385,45 @@ void SettingsPanel::timerCallback()
         status << txt ("  ·  letzte Rechenzeit: ") << juce::String (app.transcriber.getLastRealtimeFactor() * 100.0, 0)
                << txt (" % der Sprechdauer");
     modelStatus.setText (status, juce::dontSendNotification);
+}
+
+void SettingsPanel::rebuildWirelessRows()
+{
+    wirelessRows.clear();
+
+    for (auto& d : app.state.getSettings().wirelessDevices)
+    {
+        auto* row = wirelessRows.add (new WirelessRow (d));
+        const auto id = d.id;
+
+        row->onChange = [this, id] (const WirelessDeviceConfig& c)
+        {
+            store ([id, c] (AppSettings& s)
+            {
+                for (auto& dev : s.wirelessDevices)
+                    if (dev.id == id)
+                        dev = c;
+            });
+        };
+
+        row->onRemove = [this, id]
+        {
+            // Nicht im Klick-Callback der Zeile löschen, die gerade abgearbeitet wird
+            juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<SettingsPanel> (this), id]
+            {
+                if (safe != nullptr)
+                    safe->store ([id] (AppSettings& s)
+                    {
+                        auto& v = s.wirelessDevices;
+                        v.erase (std::remove_if (v.begin(), v.end(), [&] (const WirelessDeviceConfig& dev) { return dev.id == id; }), v.end());
+                    });
+            });
+        };
+
+        content.addAndMakeVisible (row);
+    }
+
+    content.resized();
 }
 
 void SettingsPanel::chooseModelFile()
@@ -369,6 +519,13 @@ void SettingsPanel::Content::resized()
     o.deviceSelector.setBounds (row (330).withTrimmedLeft (-10));
     y = o.deviceSelector.getBottom() + 10;
     o.audioHint.setBounds (row (64));
+    endSection();
+
+    beginSection (txt ("Funkempfänger"));
+    o.wirelessHint.setBounds (row (60));
+    for (auto* r : o.wirelessRows)
+        r->setBounds (row (66));
+    o.addWirelessButton.setBounds (row (32).withWidth (230));
     endSection();
 
     beginSection ("Spracherkennung");
