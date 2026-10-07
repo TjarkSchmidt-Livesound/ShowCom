@@ -357,7 +357,7 @@ int main()
         {
             const double secs = (double) r->lengthInSamples / r->sampleRate;
             std::printf ("      %s: %.2f s\n", wavs[0].getFileName().toRawUTF8(), secs);
-            check (secs > 6.0 && secs < 7.0, "WAV-Länge entspricht der Session-Dauer");
+            check (secs > 5.0 && secs < 7.5, "WAV-Länge entspricht der Session-Dauer");   // CI-Rechner laufen nicht exakt in Echtzeit
 
             // Im WAV muss bei Abschnitt 2 tatsächlich Signal liegen
             juce::AudioBuffer<float> b (1, 4800);

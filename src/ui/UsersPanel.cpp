@@ -134,13 +134,16 @@ UserEditor::UserEditor (AppController& a) : app (a)
         if (u == nullptr)
             return;
 
+        // SafePointer vorab anlegen: MSVC deutet "this" in einer verschachtelten Init-Capture falsch
+        juce::Component::SafePointer<UserEditor> self (this);
+
         juce::AlertWindow::showAsync (juce::MessageBoxOptions()
                                           .withIconType (juce::MessageBoxIconType::QuestionIcon)
                                           .withTitle ("Person entfernen")
                                           .withMessage (u->name + txt (" wirklich entfernen? Bisherige Transkripte bleiben erhalten."))
                                           .withButton ("Entfernen")
                                           .withButton ("Abbrechen"),
-                                      [safe = juce::Component::SafePointer<UserEditor> (this), id = userId] (int result)
+                                      [safe = self, id = userId] (int result)
                                       {
                                           if (safe == nullptr || result != 1)
                                               return;

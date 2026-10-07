@@ -409,7 +409,8 @@ void SettingsPanel::rebuildWirelessRows()
         row->onRemove = [this, id]
         {
             // Nicht im Klick-Callback der Zeile löschen, die gerade abgearbeitet wird
-            juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<SettingsPanel> (this), id]
+            juce::Component::SafePointer<SettingsPanel> self (this);
+            juce::MessageManager::callAsync ([safe = self, id]
             {
                 if (safe != nullptr)
                     safe->store ([id] (AppSettings& s)
