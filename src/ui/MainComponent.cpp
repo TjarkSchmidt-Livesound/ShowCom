@@ -387,7 +387,7 @@ void MainComponent::updateSetupBar()
     else if (modelState == Transcriber::ModelState::none || modelState == Transcriber::ModelState::failed)
     {
         msg = txt ("Noch kein Spracherkennungs-Modell geladen – ohne Modell wird nichts transkribiert. "
-                   "Unter Einstellungen → Spracherkennung eins herunterladen.");
+                   "Unter Einstellungen → Spracherkennung „Parakeet v3“ herunterladen (einmalig, danach offline).");
         action = "Modell laden";
         act = goSettings;
     }
@@ -491,7 +491,15 @@ void MainComponent::timerCallback()
     statusLabel.setColour (juce::Label::textColourId,
                            app.transcriber.getModelState() == Transcriber::ModelState::ready ? Theme::textDim : Theme::alert);
 
-    repaint (presenceArea);
+    // Sprech-Anzeige oben nur neu zeichnen, wenn sich etwas geändert hat
+    juce::String presence;
+    for (auto& u : app.state.getUsers())
+        presence << (AppState::logsTalkback (u) && app.engine.isSpeaking (u.channel) ? "1" : "0");
+    if (presence != lastPresence)
+    {
+        lastPresence = presence;
+        repaint (presenceArea);
+    }
 }
 
 //==============================================================================

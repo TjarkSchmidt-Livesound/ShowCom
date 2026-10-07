@@ -1,5 +1,7 @@
 #include "AppController.h"
 
+#include <BinaryData.h>
+
 AppController::AppController()
 {
     state.load();
@@ -144,6 +146,48 @@ juce::String AppController::buildPrompt() const
     return prompt;
 }
 
+juce::StringArray AppController::buildHotwords() const
+{
+    // Parakeet bevorzugt diese Begriffe: Namen der Crew, Alarm-Namen, eigene Begriffe
+    // und englische Bühnenbegriffe, die im deutschen Satz sonst gern falsch geschrieben werden.
+    const auto& s = state.getSettings();
+    juce::StringArray words;
+
+    for (auto& u : state.getUsers())
+    {
+        words.add (u.name);
+        if (u.role.isNotEmpty())
+            words.add (u.role);
+    }
+
+    juce::StringArray more;
+    more.addTokens (s.keywords + "," + s.vocabulary, ",;\n", "");
+    more.trim();
+    words.addArray (more);
+
+    for (auto* w : { "Talkback", "Wedge", "In-Ear", "FOH", "Line Check", "Soundcheck", "Changeover", "Backline", "Handsender" })
+        words.add (w);
+
+    words.trim();
+    words.removeEmptyStrings();
+    words.removeDuplicates (true);
+    while (words.size() > 80)
+        words.remove (words.size() - 1);
+    return words;
+}
+
+juce::File AppController::getVadModelFile()
+{
+    // Silero VAD (630 KB) steckt im Programm und wird beim ersten Start in den Modell-Ordner gelegt
+    auto f = AppState::getModelsDir().getChildFile ("silero_vad.onnx");
+    if (f.getSize() != (juce::int64) BinaryData::silero_vad_onnxSize)
+    {
+        f.getParentDirectory().createDirectory();
+        f.replaceWithData (BinaryData::silero_vad_onnx, (size_t) BinaryData::silero_vad_onnxSize);
+    }
+    return f;
+}
+
 void AppController::applyState()
 {
     const auto& s = state.getSettings();
@@ -167,10 +211,12 @@ void AppController::applyState()
 
     Transcriber::Options o;
     o.model = s.modelPath.isNotEmpty() ? juce::File (s.modelPath) : juce::File();
+    o.vadModel = getVadModelFile();
     o.language = s.language;
     o.useGpu = s.useGpu;
     o.mode = s.recognitionMode;
     o.prompt = buildPrompt();
+    o.hotwords = buildHotwords();
     transcriber.setOptions (o);
 
     if (! keywordsApplied || appliedKeywords != s.keywords || appliedFuzzy != s.fuzzyKeywords)

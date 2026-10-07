@@ -1,7 +1,34 @@
 #include "Theme.h"
 
+#include <map>
+
 namespace Theme
 {
+
+/** Profilbilder (512 px) für die kleinen Kreise einmal passend verkleinern statt bei jedem Zeichnen. */
+static juce::Image scaledFor (const juce::Image& image, juce::Rectangle<float> area, juce::Graphics& g)
+{
+    struct Entry { juce::Image original; std::map<int, juce::Image> sizes; };
+    static std::map<const void*, Entry> cache;
+
+    const int px = juce::roundToInt (juce::jmax (area.getWidth(), area.getHeight()) * g.getInternalContext().getPhysicalPixelScaleFactor());
+    if (px <= 0 || px >= image.getWidth())
+        return image;
+
+    const void* key = image.getPixelData().get();
+    auto it = cache.find (key);
+    if (it == cache.end())
+    {
+        if (cache.size() > 64)
+            cache.clear();
+        it = cache.emplace (key, Entry { image, {} }).first;   // hält das Original fest: Adresse bleibt eindeutig
+    }
+
+    auto& scaled = it->second.sizes[px];
+    if (! scaled.isValid())
+        scaled = image.rescaled (px, px, juce::Graphics::highResamplingQuality);
+    return scaled;
+}
 
 void drawAvatar (juce::Graphics& g, juce::Rectangle<float> b, const juce::Image& image,
                  const juce::String& name, juce::Colour colour, bool speaking)
@@ -30,7 +57,7 @@ void drawAvatar (juce::Graphics& g, juce::Rectangle<float> b, const juce::Image&
                                      colour.withMultipliedBrightness (0.35f), inner.getCentreX(), inner.getBottom() + inner.getHeight() * 0.3f, true);
         g.setGradientFill (bgFill);
         g.fillPath (circle);
-        g.drawImage (image, inner, juce::RectanglePlacement::centred | juce::RectanglePlacement::fillDestination);
+        g.drawImage (scaledFor (image, inner, g), inner, juce::RectanglePlacement::centred | juce::RectanglePlacement::fillDestination);
     }
     else
     {

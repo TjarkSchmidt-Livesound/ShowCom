@@ -21,6 +21,18 @@ namespace
         return juce::String ((double) kHz / 1000.0, 3) + " MHz";
     }
 
+    /** Vorberechnetes Bild an seinen Platz kopieren – bei 1:1 ohne Umrechnung (deutlich schneller). */
+    void blit (juce::Graphics& g, const juce::Image& img, juce::Rectangle<float> r)
+    {
+        g.setOpacity (1.0f);
+        const auto ri = r.toNearestInt();
+        if (img.getWidth() == ri.getWidth() && img.getHeight() == ri.getHeight() && ri.toFloat() == r
+            && g.getInternalContext().getPhysicalPixelScaleFactor() == 1.0f)
+            g.drawImageAt (img, ri.getX(), ri.getY());
+        else
+            g.drawImage (img, r, juce::RectanglePlacement::stretchToFit);
+    }
+
     juce::Path historyPath (const std::deque<float>& h, juce::Rectangle<float> area, int capacity, bool closed)
     {
         juce::Path p;
@@ -55,6 +67,8 @@ namespace
 
 BoardView::BoardView (AppController& a) : app (a)
 {
+    setOpaque (true);
+    content.setOpaque (true);   // nichts dahinter muss mitgezeichnet werden
     viewport.setViewedComponent (&content, false);
     viewport.setScrollBarsShown (false, true);
     viewport.setScrollBarThickness (8);
@@ -117,7 +131,9 @@ void BoardView::timerCallback()
         }
     }
 
-    if (isShowing())
+    // Neu zeichnen mit 10 Hz (Graphen laufen ohnehin mit 10 Hz); nur das pulsierende Alarm-Feld braucht 20 Hz
+    const bool pulsing = getAlertUserId != nullptr && getAlertUserId().isNotEmpty();
+    if (isShowing() && (pulsing || tick % 2 == 0))
         content.repaint();
 }
 
@@ -626,27 +642,9 @@ void BoardView::drawPill (juce::Graphics& g, juce::Rectangle<float> area, const 
     g.drawText (text, pill, juce::Justification::centred, false);
 }
 
-void BoardView::paintCommunication (juce::Graphics& g, juce::Rectangle<float> area, const UserProfile& u, bool alerting)
+void BoardView::paintCommunicationText (juce::Graphics& g, juce::Rectangle<float> area, const UserProfile& u, bool alerting, size_t count,
+                                        const std::function<std::tuple<juce::String, juce::String, bool, bool> (size_t)>& get)
 {
-    if (area.getHeight() < 30.0f)
-        return;
-
-    // Feld; leuchtet, solange ein Alarm dieser Person ansteht
-    const float pulse = 0.5f + 0.5f * std::sin ((float) juce::Time::getMillisecondCounterHiRes() * 0.008f);
-
-    if (alerting)
-    {
-        g.setColour (Theme::alert.withAlpha (0.10f + 0.18f * pulse));
-        g.fillRoundedRectangle (area.expanded (3.0f), 12.0f);
-        g.setColour (Theme::alert.withAlpha (0.55f + 0.45f * pulse));
-        g.drawRoundedRectangle (area.expanded (2.0f), 11.0f, 2.5f);
-    }
-    else
-    {
-        g.setColour (juce::Colours::black.withAlpha (0.22f));
-        g.fillRoundedRectangle (area, 10.0f);
-    }
-
     auto inner = area.reduced (10.0f, 8.0f);
     auto head = inner.removeFromTop (16.0f);
     g.setFont (Theme::font (10.5f, true));
@@ -657,14 +655,11 @@ void BoardView::paintCommunication (juce::Graphics& g, juce::Rectangle<float> ar
     // Einträge von unten nach oben stapeln: Live-Text zuerst, dann die neuesten Ansagen
     struct Item { juce::String text; juce::String meta; bool mention, live; };
     std::vector<Item> items;
-
-    const auto& liveMap = app.transcript.getLive();
-    if (auto lv = liveMap.find (u.id); lv != liveMap.end())
-        items.push_back ({ lv->second.text + txt (" …"), txt ("spricht …"), lv->second.isMention(), true });
-
-    if (auto it = recent.find (u.id); it != recent.end())
-        for (auto e = it->second.rbegin(); e != it->second.rend(); ++e)
-            items.push_back ({ e->text, e->time.formatted ("%H:%M:%S"), e->mention, false });
+    for (size_t i = 0; i < count; ++i)
+    {
+        auto [text, meta, mention, live] = get (i);
+        items.push_back ({ text, meta, mention, live });
+    }
 
     if (items.empty())
     {
@@ -719,6 +714,153 @@ void BoardView::paintCommunication (juce::Graphics& g, juce::Rectangle<float> ar
     }
 }
 
+void BoardView::paintCommunication (juce::Graphics& g, juce::Rectangle<float> area, const UserProfile& u, bool alerting)
+{
+    if (area.getHeight() < 30.0f)
+        return;
+
+    // Feld; leuchtet, solange ein Alarm dieser Person ansteht
+    const float pulse = 0.5f + 0.5f * std::sin ((float) juce::Time::getMillisecondCounterHiRes() * 0.008f);
+
+    if (alerting)
+    {
+        g.setColour (Theme::alert.withAlpha (0.10f + 0.18f * pulse));
+        g.fillRoundedRectangle (area.expanded (3.0f), 12.0f);
+        g.setColour (Theme::alert.withAlpha (0.55f + 0.45f * pulse));
+        g.drawRoundedRectangle (area.expanded (2.0f), 11.0f, 2.5f);
+    }
+    else
+    {
+        g.setColour (juce::Colours::black.withAlpha (0.22f));
+        g.fillRoundedRectangle (area, 10.0f);
+    }
+
+    // Einträge sammeln (billig) – gesetzt und gezeichnet wird nur, wenn sich etwas geändert hat
+    struct Item { juce::String text; juce::String meta; bool mention, live; };
+    std::vector<Item> items;
+
+    const auto& liveMap = app.transcript.getLive();
+    if (auto lv = liveMap.find (u.id); lv != liveMap.end())
+        items.push_back ({ lv->second.text + txt (" …"), txt ("spricht …"), lv->second.isMention(), true });
+
+    if (auto it = recent.find (u.id); it != recent.end())
+        for (auto e = it->second.rbegin(); e != it->second.rend(); ++e)
+            items.push_back ({ e->text, e->time.formatted ("%H:%M:%S"), e->mention, false });
+
+    const float scale = g.getInternalContext().getPhysicalPixelScaleFactor();
+    juce::String key;
+    key << area.getWidth() << "x" << area.getHeight() << "@" << scale << (alerting ? "A" : "-") << u.colour.toString();
+    for (auto& item : items)
+        key << "|" << item.meta << (item.mention ? "!" : "") << (item.live ? "~" : "") << item.text;
+
+    auto& cache = commCache[u.id];
+    if (cache.key != key || ! cache.image.isValid())
+    {
+        juce::Image img (juce::Image::ARGB, juce::jmax (1, juce::roundToInt (area.getWidth() * scale)),
+                         juce::jmax (1, juce::roundToInt (area.getHeight() * scale)), true);
+        {
+            juce::Graphics ig (img);
+            ig.addTransform (juce::AffineTransform::translation (-area.getX(), -area.getY()).scaled (scale));
+            paintCommunicationText (ig, area, u, alerting, items.size(),
+                                    [&items] (size_t i) { const auto& it = items[i]; return std::make_tuple (it.text, it.meta, it.mention, it.live); });
+        }
+        cache = { key, img };
+    }
+
+    blit (g, cache.image, area);   // (setzt die Deckkraft zurück – sonst übernimmt das Bild die der Feldfarbe)
+}
+
+void BoardView::paintCardStatic (juce::Graphics& g, juce::Rectangle<float> r, const UserProfile& u,
+                                 juce::Rectangle<float> header, juce::Rectangle<float> photo,
+                                 juce::Rectangle<float> graph, bool talkbackCard, float pixelScale)
+{
+        // Grundverlauf in der Farbe der Person
+        const auto top = u.colour.withMultipliedSaturation (0.85f).withMultipliedBrightness (0.62f);
+        juce::ColourGradient base (top, r.getX(), r.getY(), Theme::panel, r.getX(), r.getBottom(), false);
+        base.addColour (0.45, u.colour.withMultipliedBrightness (0.38f).interpolatedWith (Theme::panel, 0.35f));
+        g.setGradientFill (base);
+        g.fillRect (r);
+
+        // Lichtstrahlen hinter dem Foto
+        const juce::Point<float> centre (photo.getCentreX(), photo.getY() + photo.getHeight() * 0.42f);
+        const float radius = r.getHeight();
+        constexpr int rays = 22;
+
+        for (int i = 0; i < rays; ++i)
+        {
+            const float a = juce::MathConstants<float>::twoPi * (float) i / (float) rays;
+            const float w = 0.055f;
+            juce::Path ray;
+            ray.startNewSubPath (centre);
+            ray.lineTo (centre + juce::Point<float> (std::sin (a - w), -std::cos (a - w)) * radius);
+            ray.lineTo (centre + juce::Point<float> (std::sin (a + w), -std::cos (a + w)) * radius);
+            ray.closeSubPath();
+            g.setColour (u.colour.brighter (0.5f).withAlpha (i % 2 == 0 ? 0.10f : 0.05f));
+            g.fillPath (ray);
+        }
+
+        juce::ColourGradient glow (u.colour.brighter (0.4f).withAlpha (0.55f), centre.x, centre.y,
+                                   u.colour.withAlpha (0.0f), centre.x + photo.getWidth() * 0.65f, centre.y, true);
+        g.setGradientFill (glow);
+        g.fillEllipse (juce::Rectangle<float> (photo.getWidth() * 1.3f, photo.getWidth() * 1.3f).withCentre (centre));
+
+        // Foto oder Initialen
+        const auto image = app.state.getAvatar (u.id);
+        const bool cutout = image.isValid() && app.state.isAvatarCutout (u.id);
+        auto photoBox = photo.reduced (photo.getWidth() * 0.06f, 0.0f);
+
+        if (cutout)
+        {
+            // Freigestellt wie auf dem RF-Board: Person steht groß vor den Strahlen,
+            // der Kopf ragt leicht in den Namensbereich.
+            // Nur-Funk-Karte: Person groß wie auf dem RF-Board, Schultern laufen seitlich aus der Kachel
+            const float side = talkbackCard ? juce::jmin (r.getWidth() * 1.12f, photo.getBottom() - (header.getY() + 14.0f))
+                                            : juce::jmin (r.getWidth() * 1.5f, (photo.getBottom() - header.getY()) * 0.95f);
+            auto imgArea = juce::Rectangle<float> (side, side).withCentre ({ photo.getCentreX(), photo.getBottom() + 4.0f - side * 0.5f });
+
+            // Person + Schein einmal in Zielgröße vorberechnen, danach nur noch 1:1 kopieren
+            const auto layer = getPhotoLayer (u, image, true, side, pixelScale);
+            const float pad = side * 0.15f;
+            g.drawImage (layer, imgArea.expanded (pad), juce::RectanglePlacement::stretchToFit);
+        }
+        else if (image.isValid())
+        {
+            const float side = juce::jmin (photoBox.getWidth(), photoBox.getHeight());
+            auto imgArea = juce::Rectangle<float> (side, side).withCentre ({ photoBox.getCentreX(), photoBox.getBottom() - side * 0.5f });
+            const auto layer = getPhotoLayer (u, image, false, side, pixelScale);
+            g.drawImage (layer, imgArea, juce::RectanglePlacement::stretchToFit);
+        }
+        else
+        {
+            g.setColour (u.colour.brighter (0.6f).withAlpha (0.9f));
+            g.setFont (Theme::font (juce::jmin (photoBox.getWidth(), photoBox.getHeight()) * 0.42f, true));
+            g.drawText (Theme::initials (u.name), photoBox, juce::Justification::centred, false);
+        }
+
+        // Kopfbereich leicht abdunkeln, damit der Name auf dem Foto lesbar bleibt
+        if (cutout)
+        {
+            juce::ColourGradient shade (juce::Colours::black.withAlpha (0.42f), r.getX(), r.getY(),
+                                        juce::Colours::black.withAlpha (0.0f), r.getX(), header.getBottom() + 10.0f, false);
+            g.setGradientFill (shade);
+            g.fillRect (r.withBottom (header.getBottom() + 10.0f));
+        }
+
+        // Unterer Bereich abdunkeln, Foto weich auslaufen lassen
+        const float fadeTop = photo.getBottom() - 70.0f;
+        juce::ColourGradient fade (Theme::panel.withAlpha (0.0f), r.getX(), fadeTop,
+                                   Theme::panel.withAlpha (0.96f), r.getX(), photo.getBottom() + 6.0f, false);
+        g.setGradientFill (fade);
+        g.fillRect (r.withTop (fadeTop).withBottom (photo.getBottom() + 6.0f));
+        g.setColour (Theme::panel.withAlpha (0.96f));
+        g.fillRect (r.withTop (photo.getBottom() + 6.0f));
+
+        // Graph-Hintergrund
+        g.setColour (Theme::background.withAlpha (0.6f));
+        g.fillRect (graph);
+
+}
+
 void BoardView::paintCard (juce::Graphics& g, juce::Rectangle<float> r, const UserProfile& u, int index)
 {
     const auto rf = app.getRfInfo (u);
@@ -765,92 +907,32 @@ void BoardView::paintCard (juce::Graphics& g, juce::Rectangle<float> r, const Us
         juce::Graphics::ScopedSaveState save (g);
         g.reduceClipRegion (cardPath);
 
-        // Grundverlauf in der Farbe der Person
-        const auto top = u.colour.withMultipliedSaturation (0.85f).withMultipliedBrightness (0.62f);
-        juce::ColourGradient base (top, r.getX(), r.getY(), Theme::panel, r.getX(), r.getBottom(), false);
-        base.addColour (0.45, u.colour.withMultipliedBrightness (0.38f).interpolatedWith (Theme::panel, 0.35f));
-        g.setGradientFill (base);
-        g.fillRect (r);
-
-        // Lichtstrahlen hinter dem Foto
-        const juce::Point<float> centre (photo.getCentreX(), photo.getY() + photo.getHeight() * 0.42f);
-        const float radius = r.getHeight();
-        constexpr int rays = 22;
-
-        for (int i = 0; i < rays; ++i)
+        // Unveränderliche Teile (Farbverlauf, Strahlen, Foto, Abdunklung) kommen fertig aus dem Zwischenspeicher
         {
-            const float a = juce::MathConstants<float>::twoPi * (float) i / (float) rays;
-            const float w = 0.055f;
-            juce::Path ray;
-            ray.startNewSubPath (centre);
-            ray.lineTo (centre + juce::Point<float> (std::sin (a - w), -std::cos (a - w)) * radius);
-            ray.lineTo (centre + juce::Point<float> (std::sin (a + w), -std::cos (a + w)) * radius);
-            ray.closeSubPath();
-            g.setColour (u.colour.brighter (0.5f).withAlpha (i % 2 == 0 ? 0.10f : 0.05f));
-            g.fillPath (ray);
+            const float scale = g.getInternalContext().getPhysicalPixelScaleFactor();
+            const auto key = juce::String (r.getWidth()) + "x" + juce::String (r.getHeight()) + "@" + juce::String (scale)
+                           + "#" + u.colour.toString() + "#" + u.avatarFile + "#" + (u.talkbackLog ? "tb" : "rf")
+                           + "#" + (app.state.isAvatarCutout (u.id) ? "cut" : "") + "#" + u.name;
+            auto& cache = staticCache[u.id];
+
+            if (cache.key != key || ! cache.image.isValid())
+            {
+                juce::Image img (juce::Image::ARGB, juce::jmax (1, juce::roundToInt (r.getWidth() * scale)),
+                                 juce::jmax (1, juce::roundToInt (r.getHeight() * scale)), true);
+                {
+                    juce::Graphics ig (img);
+                    ig.addTransform (juce::AffineTransform::translation (-r.getX(), -r.getY()).scaled (scale));
+                    ig.reduceClipRegion (cardPath);
+                    paintCardStatic (ig, r, u, header, photo, graph, talkbackCard, scale);
+                }
+                cache = { key, img };
+            }
+
+            blit (g, cache.image, r);
         }
-
-        juce::ColourGradient glow (u.colour.brighter (0.4f).withAlpha (0.55f), centre.x, centre.y,
-                                   u.colour.withAlpha (0.0f), centre.x + photo.getWidth() * 0.65f, centre.y, true);
-        g.setGradientFill (glow);
-        g.fillEllipse (juce::Rectangle<float> (photo.getWidth() * 1.3f, photo.getWidth() * 1.3f).withCentre (centre));
-
-        // Foto oder Initialen
-        const auto image = app.state.getAvatar (u.id);
-        const bool cutout = image.isValid() && app.state.isAvatarCutout (u.id);
-        auto photoBox = photo.reduced (photo.getWidth() * 0.06f, 0.0f);
-
-        if (cutout)
-        {
-            // Freigestellt wie auf dem RF-Board: Person steht groß vor den Strahlen,
-            // der Kopf ragt leicht in den Namensbereich.
-            // Nur-Funk-Karte: Person groß wie auf dem RF-Board, Schultern laufen seitlich aus der Kachel
-            const float side = talkbackCard ? juce::jmin (r.getWidth() * 1.12f, photo.getBottom() - (header.getY() + 14.0f))
-                                            : juce::jmin (r.getWidth() * 1.5f, (photo.getBottom() - header.getY()) * 0.95f);
-            auto imgArea = juce::Rectangle<float> (side, side).withCentre ({ photo.getCentreX(), photo.getBottom() + 4.0f - side * 0.5f });
-
-            // Person + Schein einmal in Zielgröße vorberechnen, danach nur noch 1:1 kopieren
-            const float pixelScale = g.getInternalContext().getPhysicalPixelScaleFactor();
-            const auto layer = getPhotoLayer (u, image, true, side, pixelScale);
-            const float pad = side * 0.15f;
-            g.drawImage (layer, imgArea.expanded (pad), juce::RectanglePlacement::stretchToFit);
-        }
-        else if (image.isValid())
-        {
-            const float side = juce::jmin (photoBox.getWidth(), photoBox.getHeight());
-            auto imgArea = juce::Rectangle<float> (side, side).withCentre ({ photoBox.getCentreX(), photoBox.getBottom() - side * 0.5f });
-            const auto layer = getPhotoLayer (u, image, false, side, g.getInternalContext().getPhysicalPixelScaleFactor());
-            g.drawImage (layer, imgArea, juce::RectanglePlacement::stretchToFit);
-        }
-        else
-        {
-            g.setColour (u.colour.brighter (0.6f).withAlpha (0.9f));
-            g.setFont (Theme::font (juce::jmin (photoBox.getWidth(), photoBox.getHeight()) * 0.42f, true));
-            g.drawText (Theme::initials (u.name), photoBox, juce::Justification::centred, false);
-        }
-
-        // Kopfbereich leicht abdunkeln, damit der Name auf dem Foto lesbar bleibt
-        if (cutout)
-        {
-            juce::ColourGradient shade (juce::Colours::black.withAlpha (0.42f), r.getX(), r.getY(),
-                                        juce::Colours::black.withAlpha (0.0f), r.getX(), header.getBottom() + 10.0f, false);
-            g.setGradientFill (shade);
-            g.fillRect (r.withBottom (header.getBottom() + 10.0f));
-        }
-
-        // Unterer Bereich abdunkeln, Foto weich auslaufen lassen
-        const float fadeTop = photo.getBottom() - 70.0f;
-        juce::ColourGradient fade (Theme::panel.withAlpha (0.0f), r.getX(), fadeTop,
-                                   Theme::panel.withAlpha (0.96f), r.getX(), photo.getBottom() + 6.0f, false);
-        g.setGradientFill (fade);
-        g.fillRect (r.withTop (fadeTop).withBottom (photo.getBottom() + 6.0f));
-        g.setColour (Theme::panel.withAlpha (0.96f));
-        g.fillRect (r.withTop (photo.getBottom() + 6.0f));
 
         // --- Graph: HF-Signal (Fläche) + Talkback-Pegel (weiße Linie) -----
         auto plot = graph.reduced (0.0f, 6.0f);
-        g.setColour (Theme::background.withAlpha (0.6f));
-        g.fillRect (graph);
 
         const auto tb = talkbackHistory.find (u.id);
         const bool haveTb = tb != talkbackHistory.end() && u.channel >= 0

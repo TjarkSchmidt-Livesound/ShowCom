@@ -36,6 +36,40 @@ Transcriber::~Transcriber()
         whisper_free (ctx);
 }
 
+Transcriber::Engine Transcriber::engineForModel (const juce::File& f)
+{
+    if (f == juce::File())
+        return Engine::none;
+    if (ParakeetEngine::findModelDir (f) != juce::File())
+        return Engine::parakeet;
+    if (f.existsAsFile() && f.hasFileExtension (".bin"))
+        return Engine::whisper;
+    return Engine::none;
+}
+
+bool Transcriber::isReady() const
+{
+    return ctx != nullptr || parakeet.isLoaded();
+}
+
+static int numThreadsFor (int requested)
+{
+    if (requested > 0)
+        return requested;
+    // Sparsam: die halbe Kernzahl, höchstens 4 – der Rechner am Pult soll noch Luft haben
+    return juce::jlimit (1, 4, juce::SystemStats::getNumPhysicalCpus() / 2);
+}
+
+void Transcriber::loadVadIfNeeded()
+{
+    const auto path = activeOptions.vadModel.getFullPathName();
+    if (path == loadedVadPath)
+        return;
+
+    loadedVadPath = path;
+    parakeet.loadVad (activeOptions.vadModel);
+}
+
 void Transcriber::setOptions (const Options& o)
 {
     const juce::ScopedLock sl (lock);
@@ -86,30 +120,59 @@ void Transcriber::loadModelIfNeeded()
     }
 
     activeOptions = opts;
+    loadVadIfNeeded();
 
+    const auto kind = engineForModel (opts.model);
     const auto path = opts.model.getFullPathName();
-    if (ctx != nullptr && path == loadedModelPath && opts.useGpu == loadedWithGpu)
-        return;   // nur Sprache/Prompt geändert: kein Neuladen nötig
+    const int threads = numThreadsFor (opts.threads);
+
+    if (path == loadedModelPath && isReady()
+        && (kind != Engine::whisper || opts.useGpu == loadedWithGpu)
+        && (kind != Engine::parakeet || threads == loadedThreads))
+        return;   // nur Sprache/Prompt/Hotwords geändert: kein Neuladen nötig
 
     if (ctx != nullptr)
     {
         whisper_free (ctx);
         ctx = nullptr;
-        loadedModelPath = {};
     }
+    parakeet.unload();
+    loadedModelPath = {};
+    engine.store (Engine::none);
 
-    if (path.isEmpty() || ! opts.model.existsAsFile())
+    if (kind == Engine::none)
     {
         modelState.store (ModelState::none);
         const juce::ScopedLock sl (lock);
-        statusText = path.isEmpty() ? juce::String::fromUTF8 ("Kein Modell gewählt") : juce::String ("Modelldatei fehlt");
+        statusText = path.isEmpty() ? juce::String::fromUTF8 ("Kein Modell gewählt") : juce::String ("Modell fehlt oder ist unvollständig");
         return;
     }
 
     modelState.store (ModelState::loading);
     {
         const juce::ScopedLock sl (lock);
-        statusText = "Lade " + opts.model.getFileName() + " ...";
+        statusText = juce::String::fromUTF8 ("Lade ") + (kind == Engine::parakeet ? juce::String ("Parakeet") : opts.model.getFileName()) + " ...";
+    }
+
+    if (kind == Engine::parakeet)
+    {
+        juce::String error;
+        const bool ok = parakeet.load (ParakeetEngine::findModelDir (opts.model), threads, error);
+
+        const juce::ScopedLock sl (lock);
+        if (! ok)
+        {
+            modelState.store (ModelState::failed);
+            statusText = error;
+            return;
+        }
+
+        loadedModelPath = path;
+        loadedThreads = threads;
+        engine.store (Engine::parakeet);
+        modelState.store (ModelState::ready);
+        statusText = juce::String::fromUTF8 ("Parakeet v3 · CPU · ") + juce::String (threads) + (threads == 1 ? " Kern" : " Kerne");
+        return;
     }
 
     auto cparams = whisper_context_default_params();
@@ -137,8 +200,9 @@ void Transcriber::loadModelIfNeeded()
 
     loadedModelPath = path;
     loadedWithGpu = opts.useGpu;
+    engine.store (Engine::whisper);
     modelState.store (ModelState::ready);
-    statusText = opts.model.getFileNameWithoutExtension().replace ("ggml-", "")
+    statusText = "Whisper " + opts.model.getFileNameWithoutExtension().replace ("ggml-", "")
                + (cparams.use_gpu ? juce::String::fromUTF8 (" · GPU") : juce::String::fromUTF8 (" · CPU"));
 }
 
@@ -188,18 +252,70 @@ std::vector<float> Transcriber::prepareAudio (const Job& job) const
             s *= gain;
     }
 
-    // whisper.cpp braucht mindestens 1 s Audio
-    const size_t minLen = (size_t) (whisperRate * 1.1);
-    if (out.size() < minLen)
-        out.resize (minLen, 0.0f);
-
     return out;
 }
 
 void Transcriber::transcribe (Job& job)
 {
     const auto startMs = juce::Time::getMillisecondCounterHiRes();
-    const auto pcm = prepareAudio (job);
+    auto pcm = prepareAudio (job);
+    const double duration = (double) job.audio.size() / job.sampleRate;
+
+    auto deliver = [&] (const juce::String& text)
+    {
+        const double elapsed = (juce::Time::getMillisecondCounterHiRes() - startMs) / 1000.0;
+        if (! job.partial)
+            lastRtf.store (duration > 0.0 ? elapsed / duration : 0.0);
+
+        if (text.isEmpty() && job.partial)
+            return;
+
+        // Auch ein leeres Endergebnis wird gemeldet: Es räumt den Live-Text dieser Ansage ab.
+        Result r;
+        r.userId = job.userId;
+        r.text = text;
+        r.wallClock = job.wallClock;
+        r.sessionOffsetSec = job.sessionOffsetSec;
+        r.durationSec = duration;
+        r.processingSec = elapsed;
+        r.partial = job.partial;
+        r.utteranceId = job.utteranceId;
+
+        juce::MessageManager::callAsync ([this, flag = alive, r]
+        {
+            if (flag->load() && onResult)
+                onResult (r);
+        });
+    };
+
+    // Sprachprüfung: Musik-Übersprechen, Rumpeln, Klatschen gar nicht erst erkennen.
+    // Kurze Zwischenstände (unter 0,6 s) noch nicht prüfen – da fehlt der VAD der Anlauf.
+    if (parakeet.hasVad() && (! job.partial || pcm.size() > 9600))
+    {
+        const double speech = parakeet.speechSeconds (pcm);
+        if (speech >= 0.0 && speech < 0.2)
+        {
+            if (! job.partial)
+                rejected.fetch_add (1);
+            deliver ({});
+            return;
+        }
+    }
+
+    if (engine.load() == Engine::parakeet)
+    {
+        // Parakeet braucht etwas Stille am Rand, sonst fehlt gelegentlich das erste/letzte Wort
+        std::vector<float> padded (2400, 0.0f);
+        padded.insert (padded.end(), pcm.begin(), pcm.end());
+        padded.insert (padded.end(), 4800, 0.0f);
+        deliver (cleanText (parakeet.transcribe (padded, activeOptions.hotwords)));
+        return;
+    }
+
+    // whisper.cpp braucht mindestens 1 s Audio
+    const size_t minLen = (size_t) (whisperRate * 1.1);
+    if (pcm.size() < minLen)
+        pcm.resize (minLen, 0.0f);
 
     // Live-Zwischenstände: schnell (sie werden ohnehin ersetzt).
     // Endergebnisse: je nach Modus – "Genau" = volles 30-s-Fenster + Beam-Search wie Whisper-Standard.
@@ -263,30 +379,7 @@ void Transcriber::transcribe (Job& job)
     if (numSegments > 0 && minNoSpeech > 0.6f && text.length() < 25)
         text = {};
 
-    const double duration = (double) job.audio.size() / job.sampleRate;
-    const double elapsed = (juce::Time::getMillisecondCounterHiRes() - startMs) / 1000.0;
-    if (! job.partial)
-        lastRtf.store (duration > 0.0 ? elapsed / duration : 0.0);
-
-    if (text.isEmpty() && job.partial)
-        return;
-
-    // Auch ein leeres Endergebnis wird gemeldet: Es räumt den Live-Text dieser Ansage ab.
-    Result r;
-    r.userId = job.userId;
-    r.text = text;
-    r.wallClock = job.wallClock;
-    r.sessionOffsetSec = job.sessionOffsetSec;
-    r.durationSec = duration;
-    r.processingSec = elapsed;
-    r.partial = job.partial;
-    r.utteranceId = job.utteranceId;
-
-    juce::MessageManager::callAsync ([this, flag = alive, r]
-    {
-        if (flag->load() && onResult)
-            onResult (r);
-    });
+    deliver (text);
 }
 
 void Transcriber::run()
@@ -296,7 +389,7 @@ void Transcriber::run()
         wakeUp.wait (250);
         loadModelIfNeeded();
 
-        if (ctx == nullptr)
+        if (! isReady())
             continue;   // Jobs bleiben liegen, bis ein Modell geladen ist
 
         while (! threadShouldExit())
@@ -323,7 +416,7 @@ void Transcriber::run()
             busy.store (false);
 
             loadModelIfNeeded();   // Modellwechsel zwischen zwei Abschnitten erlauben
-            if (ctx == nullptr)
+            if (! isReady())
                 break;
         }
     }

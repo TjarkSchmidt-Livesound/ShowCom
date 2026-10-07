@@ -58,6 +58,8 @@ private:
     std::map<juce::String, std::pair<juce::String, std::shared_ptr<juce::MemoryBlock>>> webAvatarCache;
     void applyState();
     juce::String buildPrompt() const;
+    juce::StringArray buildHotwords() const;
+    static juce::File getVadModelFile();
 
     juce::String appliedKeywords;
     bool appliedFuzzy = true;

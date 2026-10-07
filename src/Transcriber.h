@@ -6,11 +6,19 @@
 #include <atomic>
 #include <deque>
 
+#include "ParakeetEngine.h"
+
 struct whisper_context;
 
 /**
-    Transkription mit whisper.cpp auf einem eigenen Hintergrund-Thread.
+    Transkription auf einem eigenen Hintergrund-Thread.
 
+    Zwei Erkennungen:
+    - Parakeet (Standard): NVIDIA Parakeet TDT v3 über sherpa-onnx – schnell, sparsam, kein Erfinden.
+      Modell = Ordner mit encoder/decoder/joiner/tokens.
+    - Whisper (whisper.cpp): Modell = ggml-*.bin-Datei.
+
+    Vor der Erkennung prüft Silero VAD, ob im Abschnitt überhaupt gesprochen wird.
     Abschnitte aus der Audio-Engine werden in eine Warteschlange gestellt, auf 16 kHz
     gewandelt, normalisiert und nacheinander transkribiert. Ergebnisse kommen über
     onResult auf dem Message-Thread an.
@@ -43,14 +51,24 @@ public:
 
     struct Options
     {
-        juce::File model;
+        juce::File model;             // Parakeet-Ordner oder Whisper-Datei
+        juce::File vadModel;          // silero_vad.onnx (leer = keine Sprachprüfung)
         juce::String language = "de";
         juce::String prompt;          // Namen/Begriffe, damit Whisper sie richtig schreibt
+        juce::StringArray hotwords;   // dasselbe für Parakeet: Namen, Alarm-Namen, eigene Begriffe
         bool useGpu = true;
-        int mode = 2;                 // 0 = schnell, 1 = ausgewogen, 2 = genau (Endergebnisse)
+        int mode = 2;                 // Whisper: 0 = schnell, 1 = ausgewogen, 2 = genau (Endergebnisse)
+        int threads = 0;              // 0 = automatisch (sparsam)
     };
 
     enum class ModelState { none, loading, ready, failed };
+    enum class Engine { none, parakeet, whisper };
+
+    static Engine engineForModel (const juce::File&);
+    Engine getEngine() const                    { return engine.load(); }
+
+    /** Zählt Abschnitte, die die Sprachprüfung verworfen hat (Musik, Rauschen). */
+    int getRejectedCount() const                { return rejected.load(); }
 
     Transcriber();
     ~Transcriber() override;
@@ -76,6 +94,8 @@ private:
     void run() override;
     void loadModelIfNeeded();
     std::vector<float> prepareAudio (const Job&) const;
+    bool isReady() const;
+    void loadVadIfNeeded();
     void transcribe (Job&);
 
     juce::CriticalSection lock;            // schützt pendingOptions und queue
@@ -85,8 +105,12 @@ private:
     juce::WaitableEvent wakeUp;
 
     whisper_context* ctx = nullptr;
-    juce::String loadedModelPath;
+    ParakeetEngine parakeet;
+    juce::String loadedModelPath, loadedVadPath;
     bool loadedWithGpu = false;
+    int loadedThreads = 0;
+    std::atomic<Engine> engine { Engine::none };
+    std::atomic<int> rejected { 0 };
 
     std::atomic<int> queueSize { 0 };
     std::atomic<bool> busy { false };

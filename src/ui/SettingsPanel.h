@@ -4,14 +4,23 @@
 #include "AppController.h"
 #include "Theme.h"
 
-/** Lädt Whisper-Modelle von Hugging Face in den Modell-Ordner. */
+/** Lädt Modelle (Parakeet: Ordner mit mehreren Dateien, Whisper: eine Datei) von Hugging Face. */
 class ModelDownloader : private juce::URL::DownloadTaskListener
 {
 public:
-    struct Model { const char* file; const char* label; };
+    struct File { const char* name; juce::int64 bytes; };
+    struct Model
+    {
+        const char* label;
+        const char* folder;          // Parakeet: Unterordner im Modell-Ordner; Whisper: leer
+        const char* baseUrl;
+        std::vector<File> files;
+        juce::File target() const;   // Ordner bzw. Datei
+        bool isInstalled() const;
+    };
     static const std::vector<Model>& models();
 
-    bool start (const juce::String& fileName);
+    bool start (const Model&);
     void cancel();
     bool isRunning() const                   { return task != nullptr; }
     double& getProgress()                    { return progressValue; }
@@ -24,8 +33,13 @@ private:
     void finished (juce::URL::DownloadTask*, bool success) override;
     void progress (juce::URL::DownloadTask*, juce::int64 downloaded, juce::int64 total) override;
 
+    void startNext();
+
     std::unique_ptr<juce::URL::DownloadTask> task;
     juce::File target, partFile;
+    const Model* current = nullptr;
+    size_t fileIndex = 0;
+    juce::int64 doneBytes = 0, totalBytes = 0;
     double progressValue = 0.0;   // wird von ProgressBar gelesen (Message-Thread)
     std::atomic<double> atomicProgress { 0.0 };
     std::shared_ptr<std::atomic<bool>> alive = std::make_shared<std::atomic<bool>> (true);
@@ -131,13 +145,13 @@ private:
 
     // Transkription
     juce::Label modelLabel, modelStatus;
-    juce::TextButton chooseModelButton { txtInit ("Modelldatei wählen …") };
+    juce::TextButton chooseModelButton { txtInit ("Modell wählen …") };
     juce::ComboBox downloadBox;
     juce::TextButton downloadButton { "Herunterladen" };
     ModelDownloader downloader;
     juce::ProgressBar progressBar { downloader.getProgress() };
     juce::ComboBox languageBox;
-    juce::ToggleButton gpuToggle { "GPU benutzen (Metal / CUDA / Vulkan, falls einkompiliert)" };
+    juce::ToggleButton gpuToggle { "Whisper: GPU benutzen (Metal / CUDA / Vulkan, falls einkompiliert)" };
     juce::Label modeLabel, vocabLabel;
     juce::ComboBox modeBox;
     juce::TextEditor vocabEditor;

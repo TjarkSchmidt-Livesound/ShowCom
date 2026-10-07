@@ -92,6 +92,7 @@ private:
     juce::TextButton listenButton;
     juce::Label statusLabel;
     juce::Rectangle<int> headerArea, presenceArea;
+    juce::String lastPresence;
     AlertBanner banner { app };
     SetupBar setupBar;
     std::function<void()> setupAction;

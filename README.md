@@ -14,7 +14,8 @@
 - **Benutzer mit Avataren**: Name, Funktion (FOH, Monitor, Licht …), Farbe, Profilbild (Klick oder Drag & Drop), Eingang und Sprach-Schwelle mit Live-Pegel.
 - **Tabs**: *Konversation* (alle chronologisch), *Erwähnungen*, ein Tab pro Person, *Personen*, *Einstellungen*.
 - **Namens-Alarm**: Dein Name (plus Varianten) wird in jedem Transkript gesucht – ohne Groß/klein, mit Umlaut-Faltung und optional unscharf („Tjarck“ → „Tjark“). Bei einem Treffer blinkt oben ein großes Banner, der Beitrag wird markiert, ein Klick springt hin.
-- **Lokal & offline**: Spracherkennung mit [whisper.cpp](https://github.com/ggml-org/whisper.cpp), auf dem Mac per GPU (Metal). Kein Internet am Venue nötig, keine Daten in der Cloud.
+- **Lokal & offline, sparsam**: Spracherkennung mit [NVIDIA Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) über [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) – reine CPU, standardmäßig nur die Hälfte der Kerne (höchstens 4), kein Internet am Venue nötig, keine Daten in der Cloud. Das Modell wird einmalig heruntergeladen (670 MB). [Whisper](https://github.com/ggml-org/whisper.cpp) bleibt als Alternative wählbar.
+- **Sprachprüfung**: Bevor erkannt wird, prüft [Silero VAD](https://github.com/snakers4/silero-vad), ob überhaupt gesprochen wurde. Musik-Übersprechen, Rauschen und Klatschen werden verworfen – das spart Rechenzeit und verhindert erfundenen Text.
 - **Live-Text**: Schon während jemand spricht, erscheint der Text (alle ~0,8 s aktualisiert); der Namens-Alarm kommt mitten im Satz. Nach dem letzten Wort wird der Text innerhalb einer halben Sekunde abgeschlossen.
 - **Hinweisleiste**: Fehlt etwas (Modell, Eingang, Mikrofon-Zugriff), steht oben, was zu tun ist – mit Sprung zur richtigen Einstellung.
 - **Hört immer zu, speichert nichts**: ShowCom hört ab dem Programmstart mit (oben „HÖRT ZU“, per Klick pausierbar). Es werden keine Audiodateien und keine Protokolle geschrieben; das Audio wird nur im Arbeitsspeicher verarbeitet.
@@ -29,10 +30,11 @@ Audio-Interface (ASIO / CoreAudio)
 AudioEngine – Verarbeitungs-Thread
    │  pro Person: Sprach-Gate (Pre-Roll 300 ms, Nachlauf 700 ms, max. 25 s)
    ▼
-Transcriber – eigener Thread, whisper.cpp
-   │  48 kHz → 16 kHz, Pegel anheben, Halluzinationen filtern, Namen als Prompt,
-   │  Live-Zwischenstände schnell (verkürztes Fenster), Endergebnis genau (volles Fenster,
-   │  Beam-Search), Talkback-Fachwörter und eigene Begriffe als Kontext
+Transcriber – eigener Thread
+   │  48 kHz → 16 kHz, Pegel anheben, Silero VAD: nur echte Sprache weiter
+   │  Parakeet TDT v3 (sherpa-onnx, CPU): rechnet nur so lange, wie gesprochen wurde,
+   │  Namen der Crew, Alarm-Namen und eigene Begriffe als Hotwords
+   │  (alternativ Whisper: Namen als Prompt, Halluzinationsfilter)
    ▼
 TranscriptModel → Namenssuche (KeywordMatcher) → GUI (JUCE)
 ```
@@ -42,7 +44,8 @@ TranscriptModel → Namenssuche (KeywordMatcher) → GUI (JUCE)
 | `src/AudioEngine.*` | Gerät, Echtzeit-Callback, FIFOs, Pegel, Segmentierung |
 | `src/core/SpeechSegmenter.*` | Sprach-Gate (reines C++, getestet) |
 | `src/core/KeywordMatcher.*` | Namenssuche (reines C++, getestet) |
-| `src/Transcriber.*` | whisper.cpp-Anbindung, Resampling, Filter, Modell-Laden |
+| `src/Transcriber.*` | Warteschlange, Resampling, Sprachprüfung, Whisper-Anbindung, Modell-Laden |
+| `src/ParakeetEngine.*` | Parakeet und Silero VAD über sherpa-onnx |
 | `src/TranscriptModel.*` | Einträge, Erwähnungen, Protokolldateien |
 | `src/AppState.*` | Benutzer, Avatare, Dashboard-Layout, Einstellungen (JSON) |
 | `src/core/Cutout.*` | Profilbilder freistellen (reines C++, getestet); `src/CutoutMac.mm` nutzt auf dem Mac Apple Vision |
@@ -55,7 +58,7 @@ TranscriptModel → Namenssuche (KeywordMatcher) → GUI (JUCE)
 
 ## Bauen
 
-Voraussetzungen: CMake ≥ 3.22, Git. JUCE 8.0.9 und whisper.cpp 1.9.5 lädt CMake beim ersten Konfigurieren selbst herunter.
+Voraussetzungen: CMake ≥ 3.22, Git. JUCE 8.0.9, whisper.cpp 1.9.5 und die vorgebauten sherpa-onnx-1.13.8-Bibliotheken (inkl. ONNX Runtime, statisch gelinkt) lädt CMake beim ersten Konfigurieren selbst herunter.
 
 ### Windows (mit ASIO)
 
@@ -108,7 +111,7 @@ ctest --test-dir build -C Release --output-on-failure
 
 ## Erste Schritte
 
-1. **Einstellungen → Spracherkennung**: Modell `large-v3-turbo q5` (574 MB, genaueste Erkennung) *Herunterladen*, Sprache Deutsch, Erkennung **Genau**. Unter *Eigene Begriffe* Bandname, Songtitel und Fachwörter eintragen – Whisper schreibt sie dann richtig.
+1. **Einstellungen → Spracherkennung**: **Parakeet v3** *Herunterladen* (einmalig, ca. 670 MB – am besten zu Hause, danach läuft alles offline). Unter *Eigene Begriffe* Bandname, Songtitel und Fachwörter eintragen – sie werden dann bevorzugt erkannt. Für einen Rechner ohne Internet: die vier Dateien von [Hugging Face](https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/tree/main) (`encoder.int8.onnx`, `decoder.int8.onnx`, `joiner.int8.onnx`, `tokens.txt`) in einen Ordner legen, per USB-Stick übertragen und über *Modell wählen …* einbinden.
 2. **Einstellungen → Audio-Interface**: unter Windows Typ **ASIO** und dein Interface wählen, unter macOS das CoreAudio-Gerät.
 3. **Personen**: Für jede Person *+ Person*, Name, Funktion, Profilbild (*Hintergrund ausblenden* ist voreingestellt; am besten ein Foto vor ruhigem Hintergrund oder ein freigestelltes PNG). **Talkback dieser Person mitloggen** an → **Eingang** wählen; aus → reine Funküberwachung (Redner, Band). Die **Sprach-Schwelle** (gelber Strich) knapp über das Grundrauschen bzw. Bühnen-Übersprechen stellen – der Pegelbalken zeigt live, ob Sprache erkannt wird.
 4. **Einstellungen → Mein Name**: deinen Namen und Varianten eintragen, z. B. `Tjark, Tjarki, Monitor-Tjark`. Mit *Alarm testen* prüfen.
@@ -155,7 +158,8 @@ Hinweis: Das neuere, verschlüsselte SSCv2 der EW-DX (HTTPS mit Passwort) ist no
 - **Signal abgreifen**: Talkback-Mikros vor dem Talkback-Bus abgreifen (Direct Out, Split, Dante/AVB-Stream) und einzeln auf das Interface legen. Ein Summen-Talkback funktioniert technisch auch, dann ist aber nur eine „Person“ erkennbar.
 - **ASIO ist meist Single-Client**: Läuft auf demselben Interface schon eine DAW für den Show-Mitschnitt, kann ShowCom es oft nicht gleichzeitig öffnen. Lösungen: ein separates kleines Interface, ein Multi-Client-Treiber oder ein eigener Dante-/AVB-Kanal für diesen Rechner.
 - **Zugewiesene Eingänge** werden automatisch am Interface aktiviert.
-- **Whisper-Eigenheiten**: In Stille oder Rauschen erfindet Whisper gern Floskeln („Untertitel im Auftrag des ZDF“). Die bekannten werden herausgefiltert, und das Sprach-Gate schickt nur echte Sprache zur Erkennung. Wenn trotzdem Unsinn erscheint: Schwelle der betreffenden Person anheben.
+- **Parakeet oder Whisper?** Parakeet ist der Standard: Auf Deutsch ähnlich genau wie Whisper large-v3-turbo, aber mit etwa einem Fünftel der Rechenzeit, und es erfindet keine Sätze. Whisper nur wählen, wenn ein Rechner mit starker GPU da ist und Parakeet bei euren Stimmen/Akzenten schlechter ist.
+- **Whisper-Eigenheiten**: In Stille oder Rauschen erfindet Whisper gern Floskeln („Untertitel im Auftrag des ZDF“). Die bekannten werden herausgefiltert, und die Sprachprüfung schickt nur echte Sprache zur Erkennung.
 - **Namen richtig schreiben**: Alle Personennamen und deine Namen werden der Erkennung als Kontext mitgegeben, das verbessert die Schreibweise deutlich.
 
 ## Daten
@@ -175,5 +179,7 @@ Hinweis: Das neuere, verschlüsselte SSCv2 der EW-DX (HTTPS mit Passwort) ist no
 ## Lizenzen
 
 - **JUCE 8**: AGPLv3 oder kommerzielle JUCE-Lizenz. Für eigene/interne Nutzung problemlos; wer das Programm weitergibt, muss AGPLv3 einhalten oder eine JUCE-Lizenz haben.
+- **sherpa-onnx**: Apache-2.0. **ONNX Runtime**: MIT. **Silero VAD**: MIT.
+- **Parakeet TDT 0.6B v3** (NVIDIA): CC BY 4.0 – Modell wird nicht mitgeliefert, sondern beim Einrichten heruntergeladen.
 - **whisper.cpp / ggml**: MIT. Whisper-Modelle: MIT (OpenAI).
 - **Steinberg ASIO SDK**: GPLv3 oder proprietäre Steinberg-Lizenz. Das SDK liegt nicht im Repository, sondern wird beim Bauen eingebunden.

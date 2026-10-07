@@ -4,6 +4,7 @@
 #include "Theme.h"
 
 #include <deque>
+#include <tuple>
 
 /**
     Board: eine hohe Kachel pro Person, wie ein RF-Board.
@@ -65,8 +66,12 @@ private:
 
     void layoutCards();
     void paintCard (juce::Graphics&, juce::Rectangle<float>, const UserProfile&, int index);
+    void paintCardStatic (juce::Graphics&, juce::Rectangle<float> r, const UserProfile&, juce::Rectangle<float> header,
+                          juce::Rectangle<float> photo, juce::Rectangle<float> graph, bool talkbackCard, float pixelScale);
     static void drawBattery (juce::Graphics&, juce::Rectangle<float>, int percent, bool known);
     void paintCommunication (juce::Graphics&, juce::Rectangle<float>, const UserProfile&, bool alerting);
+    void paintCommunicationText (juce::Graphics&, juce::Rectangle<float>, const UserProfile&, bool alerting, size_t count,
+                                 const std::function<std::tuple<juce::String, juce::String, bool, bool> (size_t)>& get);
     static void drawPill (juce::Graphics&, juce::Rectangle<float> centreArea, const juce::String& text, juce::Colour bg, juce::Colour fg);
 
     AppController& app;
@@ -83,6 +88,8 @@ private:
 
     struct PhotoLayer { juce::String key; juce::Image image; };
     std::map<juce::String, PhotoLayer> photoCache;
+    std::map<juce::String, PhotoLayer> staticCache;   // Kachel-Hintergrund mit Foto
+    std::map<juce::String, PhotoLayer> commCache;     // gesetzter Text der letzten Ansagen
 
     static constexpr int toolbarH = 38;
 

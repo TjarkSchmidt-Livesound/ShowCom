@@ -5,14 +5,35 @@ using Theme::txt;
 //==============================================================================
 const std::vector<ModelDownloader::Model>& ModelDownloader::models()
 {
+    static const char* whisperUrl = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/";
     static const std::vector<Model> list = {
-        { "ggml-large-v3-turbo-q5_0.bin", "large-v3-turbo q5  (574 MB) – genaueste Erkennung, empfohlen" },
-        { "ggml-medium-q5_0.bin",         "medium q5          (539 MB) – genau, etwas schneller auf älteren Rechnern" },
-        { "ggml-small-q5_1.bin",          "small q5           (190 MB) – schnell, für ältere Rechner" },
-        { "ggml-large-v3-turbo.bin",      "large-v3-turbo     (1,6 GB) – höchste Qualität, nur mit GPU" },
-        { "ggml-base-q5_1.bin",           "base q5            (60 MB) – sehr schnell, ungenauer" },
+        { "Parakeet v3  (670 MB) – schnell, sparsam und genau, empfohlen", "parakeet-tdt-0.6b-v3-int8",
+          "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/main/",
+          { { "tokens.txt", 93939 }, { "decoder.int8.onnx", 11845275 }, { "joiner.int8.onnx", 6355277 },
+            { "encoder.int8.onnx", 652184281 } } },
+        { "Whisper large-v3-turbo q5  (574 MB) – braucht deutlich mehr Rechenleistung", "", whisperUrl,
+          { { "ggml-large-v3-turbo-q5_0.bin", 574041195 } } },
+        { "Whisper small q5  (190 MB) – für ältere Rechner, ungenauer", "", whisperUrl,
+          { { "ggml-small-q5_1.bin", 190085487 } } },
     };
     return list;
+}
+
+juce::File ModelDownloader::Model::target() const
+{
+    const auto dir = AppState::getModelsDir();
+    return juce::String (folder).isNotEmpty() ? dir.getChildFile (folder) : dir.getChildFile (files.front().name);
+}
+
+bool ModelDownloader::Model::isInstalled() const
+{
+    if (juce::String (folder).isEmpty())
+        return target().getSize() > files.front().bytes / 2;
+
+    for (auto& f : files)
+        if (target().getChildFile (f.name).getSize() < f.bytes / 2)
+            return false;
+    return true;
 }
 
 ModelDownloader::~ModelDownloader()
@@ -21,20 +42,45 @@ ModelDownloader::~ModelDownloader()
     task.reset();
 }
 
-bool ModelDownloader::start (const juce::String& fileName)
+bool ModelDownloader::start (const Model& m)
 {
     if (task != nullptr)
         return false;
 
-    target = AppState::getModelsDir().getChildFile (fileName);
-    partFile = target.withFileExtension (".part");
-    partFile.deleteFile();
+    current = &m;
+    fileIndex = 0;
+    doneBytes = 0;
+    totalBytes = 0;
+    for (auto& f : m.files)
+        totalBytes += f.bytes;
+
     atomicProgress.store (0.0);
     progressValue = 0.0;
-
-    juce::URL url ("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/" + fileName);
-    task = url.downloadToFile (partFile, juce::URL::DownloadTaskOptions().withListener (this));
+    startNext();
     return task != nullptr;
+}
+
+void ModelDownloader::startNext()
+{
+    const auto& f = current->files[fileIndex];
+    const bool inFolder = juce::String (current->folder).isNotEmpty();
+
+    target = inFolder ? current->target().getChildFile (f.name) : current->target();
+    target.getParentDirectory().createDirectory();
+    partFile = target.withFileExtension (target.getFileExtension() + ".part");
+    partFile.deleteFile();
+
+    if (target.getSize() >= f.bytes / 2 && inFolder)
+    {
+        // schon vorhanden (z. B. abgebrochener Download): überspringen
+        doneBytes += f.bytes;
+        if (++fileIndex < current->files.size())
+            startNext();
+        return;
+    }
+
+    juce::URL url (juce::String (current->baseUrl) + f.name);
+    task = url.downloadToFile (partFile, juce::URL::DownloadTaskOptions().withListener (this));
 }
 
 void ModelDownloader::cancel()
@@ -44,12 +90,12 @@ void ModelDownloader::cancel()
     atomicProgress.store (0.0);
 }
 
-void ModelDownloader::progress (juce::URL::DownloadTask*, juce::int64 downloaded, juce::int64 total)
+void ModelDownloader::progress (juce::URL::DownloadTask*, juce::int64 downloaded, juce::int64)
 {
-    if (total > 0)
-        atomicProgress.store ((double) downloaded / (double) total);
+    if (totalBytes > 0)
+        atomicProgress.store (juce::jlimit (0.0, 1.0, (double) (doneBytes + downloaded) / (double) totalBytes));
     else
-        atomicProgress.store (-1.0);   // unbekannte Größe: ProgressBar zeigt Animation
+        atomicProgress.store (-1.0);
 }
 
 void ModelDownloader::finished (juce::URL::DownloadTask* t, bool success)
@@ -59,23 +105,31 @@ void ModelDownloader::finished (juce::URL::DownloadTask* t, bool success)
 
     juce::MessageManager::callAsync ([this, flag = alive, success, httpOk, code]
     {
-        if (! flag->load())
+        if (! flag->load() || current == nullptr)
             return;
 
         task.reset();
 
-        juce::String error;
-        // Kleine Dateien sind HTML-Fehlerseiten, keine Modelle
-        const bool plausible = partFile.getSize() > 10 * 1024 * 1024;
+        const auto& f = current->files[fileIndex];
+        // Viel zu kleine Dateien sind HTML-Fehlerseiten, keine Modelle
+        const bool plausible = partFile.getSize() >= f.bytes / 2;
 
-        if (success && httpOk && plausible && partFile.moveFileTo (target))
+        if (success && httpOk && plausible && (target.deleteFile(), partFile.moveFileTo (target)))
         {
+            doneBytes += f.bytes;
+            if (++fileIndex < current->files.size())
+            {
+                startNext();
+                if (task != nullptr || fileIndex >= current->files.size())
+                    return;
+            }
+
             atomicProgress.store (1.0);
-            if (onFinished) onFinished (true, target, {});
+            if (onFinished) onFinished (true, current->target(), {});
             return;
         }
 
-        error = success ? ("Server-Antwort " + juce::String (code)) : juce::String ("Verbindung fehlgeschlagen");
+        const auto error = success ? ("Server-Antwort " + juce::String (code)) : juce::String ("Verbindung fehlgeschlagen");
         partFile.deleteFile();
         atomicProgress.store (0.0);
         if (onFinished) onFinished (false, {}, error);
@@ -281,7 +335,7 @@ SettingsPanel::SettingsPanel (AppController& a)
     int id = 1;
     for (auto& m : ModelDownloader::models())
         downloadBox.addItem (txt (m.label), id++);
-    // large-v3-turbo q5 ist bei Deutsch am genauesten; die Schnelligkeit kommt über den Live-Text.
+    // Parakeet: ähnlich genau wie Whisper large-v3-turbo, aber ein Bruchteil der Rechenzeit
     downloadBox.setSelectedId (1, juce::dontSendNotification);
     content.addAndMakeVisible (downloadBox);
 
@@ -300,8 +354,9 @@ SettingsPanel::SettingsPanel (AppController& a)
             juce::AlertWindow::showAsync (juce::MessageBoxOptions()
                                               .withIconType (juce::MessageBoxIconType::WarningIcon)
                                               .withTitle ("Download fehlgeschlagen")
-                                              .withMessage (error + txt ("\n\nAlternativ das Modell im Browser laden und über „Modelldatei wählen …“ einbinden:\n"
-                                                                         "huggingface.co/ggerganov/whisper.cpp"))
+                                              .withMessage (error + txt ("\n\nAlternativ die Modelldateien im Browser laden und über „Modell wählen …“ einbinden:\n"
+                                                                         "Parakeet: huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8 (Ordner mit allen Dateien)\n"
+                                                                         "Whisper: huggingface.co/ggerganov/whisper.cpp"))
                                               .withButton ("OK"),
                                           nullptr);
     };
@@ -322,7 +377,7 @@ SettingsPanel::SettingsPanel (AppController& a)
     modeLabel.setColour (juce::Label::textColourId, Theme::textDim);
     content.addAndMakeVisible (modeLabel);
 
-    modeBox.addItem (txt ("Genau – volle Whisper-Qualität (empfohlen)"), 3);
+    modeBox.addItem (txt ("Genau – volle Whisper-Qualität"), 3);
     modeBox.addItem (txt ("Ausgewogen – etwas schneller"), 2);
     modeBox.addItem (txt ("Schnell – verkürztes Hörfenster, ungenauer"), 1);
     modeBox.onChange = [this] { store ([v = modeBox.getSelectedId() - 1] (AppSettings& s) { s.recognitionMode = v; }); };
@@ -392,8 +447,25 @@ void SettingsPanel::loadFromState()
     const juce::ScopedValueSetter<bool> svs (loading, true);
     const auto& s = app.state.getSettings();
 
-    modelLabel.setText (s.modelPath.isEmpty() ? txt ("Kein Modell gewählt") : juce::File (s.modelPath).getFileName(),
-                        juce::dontSendNotification);
+    {
+        const juce::File m (s.modelPath);
+        const auto kind = Transcriber::engineForModel (m);
+        modelLabel.setText (s.modelPath.isEmpty() ? txt ("Kein Modell gewählt")
+                            : kind == Transcriber::Engine::parakeet ? txt ("Parakeet v3  (") + m.getFileName() + ")"
+                            : kind == Transcriber::Engine::whisper  ? "Whisper  (" + m.getFileName() + ")"
+                                                                     : m.getFileName(),
+                            juce::dontSendNotification);
+
+        // Whisper-Einstellungen nur zeigen, wenn Whisper benutzt wird
+        const bool whisper = kind == Transcriber::Engine::whisper;
+        if (gpuToggle.isVisible() != whisper)
+        {
+            gpuToggle.setVisible (whisper);
+            modeLabel.setVisible (whisper);
+            modeBox.setVisible (whisper);
+            content.resized();
+        }
+    }
     languageBox.setSelectedId (s.language == "de" ? 1 : s.language == "en" ? 2 : 3, juce::dontSendNotification);
     gpuToggle.setToggleState (s.useGpu, juce::dontSendNotification);
     modeBox.setSelectedId (s.recognitionMode + 1, juce::dontSendNotification);
@@ -488,7 +560,11 @@ void SettingsPanel::timerCallback()
 
     auto status = app.transcriber.getModelStatusText();
     if (app.transcriber.getModelState() == Transcriber::ModelState::none)
-        status = txt ("Unten ein Modell herunterladen oder eine vorhandene ggml-Datei wählen.");
+        status = txt ("Unten „Parakeet v3“ herunterladen (einmalig, danach offline) oder ein vorhandenes Modell wählen.");
+    else if (app.transcriber.getEngine() == Transcriber::Engine::whisper)
+        status << txt ("  ·  Tipp: Parakeet v3 braucht nur einen Bruchteil der Rechenleistung");
+    if (app.transcriber.getRejectedCount() > 0)
+        status << txt ("  ·  ") << app.transcriber.getRejectedCount() << txt (" Geräusche ohne Sprache übersprungen");
     if (app.transcriber.getModelState() == Transcriber::ModelState::ready && app.transcriber.getLastRealtimeFactor() > 0.0)
         status << txt ("  ·  letzte Rechenzeit: ") << juce::String (app.transcriber.getLastRealtimeFactor() * 100.0, 0)
                << txt (" % der Sprechdauer");
@@ -563,12 +639,23 @@ void SettingsPanel::rebuildWirelessRows()
 
 void SettingsPanel::chooseModelFile()
 {
-    chooser = std::make_unique<juce::FileChooser> ("Whisper-Modell (ggml-*.bin)", AppState::getModelsDir(), "*.bin");
-    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+    // Parakeet: Ordner (oder eine Datei darin) · Whisper: ggml-*.bin
+    chooser = std::make_unique<juce::FileChooser> (txt ("Parakeet-Ordner oder Whisper-Datei (ggml-*.bin) wählen"),
+                                                   AppState::getModelsDir(), "*.bin;*.onnx");
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles
+                              | juce::FileBrowserComponent::canSelectDirectories,
                           [safe = juce::Component::SafePointer<SettingsPanel> (this)] (const juce::FileChooser& fc)
                           {
-                              if (safe != nullptr && fc.getResult().existsAsFile())
-                                  safe->store ([f = fc.getResult()] (AppSettings& s) { s.modelPath = f.getFullPathName(); });
+                              if (safe == nullptr)
+                                  return;
+
+                              auto f = fc.getResult();
+                              if (auto dir = ParakeetEngine::findModelDir (f); dir != juce::File())
+                                  f = dir;
+                              else if (! (f.existsAsFile() && f.hasFileExtension (".bin")))
+                                  return;
+
+                              safe->store ([f] (AppSettings& s) { s.modelPath = f.getFullPathName(); });
                           });
 }
 
@@ -582,17 +669,16 @@ void SettingsPanel::startDownload()
         return;
     }
 
-    const auto index = (size_t) juce::jmax (0, downloadBox.getSelectedId() - 1);
-    const auto fileName = juce::String (ModelDownloader::models()[index].file);
-    const auto existing = AppState::getModelsDir().getChildFile (fileName);
+    const auto index = (size_t) juce::jlimit (0, (int) ModelDownloader::models().size() - 1, downloadBox.getSelectedId() - 1);
+    const auto& model = ModelDownloader::models()[index];
 
-    if (existing.existsAsFile())
+    if (model.isInstalled())
     {
-        store ([existing] (AppSettings& s) { s.modelPath = existing.getFullPathName(); });
+        store ([t = model.target()] (AppSettings& s) { s.modelPath = t.getFullPathName(); });
         return;
     }
 
-    if (downloader.start (fileName))
+    if (downloader.start (model))
     {
         progressBar.setVisible (true);
         downloadButton.setButtonText ("Abbrechen");
@@ -679,8 +765,9 @@ void SettingsPanel::Content::resized()
     }
     o.progressBar.setBounds (row (16));
     o.languageBox.setBounds (row (32).withWidth (320));
-    o.gpuToggle.setBounds (row (26));
+    if (o.gpuToggle.isVisible())
     {
+        o.gpuToggle.setBounds (row (26));
         auto r = row (32);
         o.modeLabel.setBounds (r.removeFromLeft (110));
         o.modeBox.setBounds (r.withWidth (juce::jmin (r.getWidth(), 420)));
