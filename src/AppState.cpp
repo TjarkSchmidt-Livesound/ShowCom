@@ -78,6 +78,7 @@ void AppState::load()
             settings.liveText         = flag ("liveText", true);
             settings.boardOrder       = BoardLayout::sanitise (s->getProperty ("boardOrder"));
             settings.boardHidden      = BoardLayout::sanitise (s->getProperty ("boardHidden"));
+            settings.boardBreaks      = BoardLayout::sanitise (s->getProperty ("boardBreaks"));
         }
 
         settings.wirelessDevices.clear();
@@ -91,8 +92,13 @@ void AppState::load()
                 d.host        = v["host"].toString();
                 d.label       = v["label"].toString();
                 d.numChannels = v.hasProperty ("channels") ? (int) v["channels"] : 0;
+                d.enabled     = v.hasProperty ("enabled") ? (bool) v["enabled"] : true;
+                if (auto* off = v["disabledChannels"].getArray())
+                    for (auto& c : *off)
+                        d.disabledChannels.insert ((int) c);
                 const auto type = v["type"].toString();
                 d.type = type == "sennheiser-ewdx" ? WirelessDeviceConfig::Type::sennheiserEwdx
+                       : type == "shure-psm"       ? WirelessDeviceConfig::Type::shurePsm
                                                    : WirelessDeviceConfig::Type::shure;
                 if (d.id.isEmpty())
                     d.id = juce::Uuid().toString();
@@ -117,6 +123,10 @@ void AppState::load()
                 u.rfDeviceId  = v["rfDevice"].toString();
                 u.rfChannel   = v.hasProperty ("rfChannel") ? (int) v["rfChannel"] : 0;
                 u.cutout      = v.hasProperty ("cutout") ? (bool) v["cutout"] : true;
+                u.favorite    = v.hasProperty ("favorite") ? (bool) v["favorite"] : true;
+                u.levelFromWireless = (bool) v["levelFromWireless"];
+                u.iemDeviceId = v["iemDevice"].toString();
+                u.iemChannel  = v.hasProperty ("iemChannel") ? (int) v["iemChannel"] : 0;
                 u.colour      = v.hasProperty ("colour") ? juce::Colour::fromString (v["colour"].toString())
                                                          : paletteColour ((int) users.size());
 
@@ -150,6 +160,7 @@ void AppState::save() const
     s->setProperty ("liveText",         settings.liveText);
     s->setProperty ("boardOrder",       settings.boardOrder);
     s->setProperty ("boardHidden",      settings.boardHidden);
+    s->setProperty ("boardBreaks",      settings.boardBreaks);
 
     juce::Array<juce::var> arr;
 
@@ -167,6 +178,10 @@ void AppState::save() const
         o->setProperty ("rfDevice",    u.rfDeviceId);
         o->setProperty ("rfChannel",   u.rfChannel);
         o->setProperty ("cutout",      u.cutout);
+        o->setProperty ("favorite",    u.favorite);
+        o->setProperty ("levelFromWireless", u.levelFromWireless);
+        o->setProperty ("iemDevice",   u.iemDeviceId);
+        o->setProperty ("iemChannel",  u.iemChannel);
         arr.add (juce::var (o));
     }
 
@@ -174,12 +189,18 @@ void AppState::save() const
 
     for (auto& d : settings.wirelessDevices)
     {
-        if (d.type == WirelessDeviceConfig::Type::simulated)
+        if (d.type == WirelessDeviceConfig::Type::simulated || d.type == WirelessDeviceConfig::Type::simulatedPsm)
             continue;
 
         auto* o = new juce::DynamicObject();
         o->setProperty ("id",       d.id);
-        o->setProperty ("type",     d.type == WirelessDeviceConfig::Type::sennheiserEwdx ? "sennheiser-ewdx" : "shure");
+        o->setProperty ("type",     d.type == WirelessDeviceConfig::Type::sennheiserEwdx ? "sennheiser-ewdx"
+                                  : d.type == WirelessDeviceConfig::Type::shurePsm       ? "shure-psm" : "shure");
+        o->setProperty ("enabled",  d.enabled);
+        juce::Array<juce::var> off;
+        for (int c : d.disabledChannels)
+            off.add (c);
+        o->setProperty ("disabledChannels", off);
         o->setProperty ("host",     d.host);
         o->setProperty ("label",    d.label);
         o->setProperty ("channels", d.numChannels);
@@ -312,6 +333,16 @@ std::vector<const UserProfile*> AppState::getBoardUsers (bool includeHidden) con
             out.push_back (&users[(size_t) i]);
 
     return out;
+}
+
+void AppState::setBoardBreaks (const juce::StringArray& breaks)
+{
+    if (breaks == settings.boardBreaks)
+        return;
+
+    settings.boardBreaks = breaks;
+    save();
+    boardLayoutChanged.sendChangeMessage();
 }
 
 void AppState::setBoardLayout (const juce::StringArray& order, const juce::StringArray& hidden)

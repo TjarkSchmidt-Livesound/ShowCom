@@ -54,6 +54,36 @@
 
   /* --- Board -------------------------------------------------------------- */
   #board { display: flex; gap: 14px; padding: 14px; overflow-x: auto; flex: 1 1 auto; min-height: 0; align-items: stretch; }
+  /* Zweite Zeile: Umbruch-Element zwingt die folgenden Kacheln in eine neue Reihe */
+  #board.rows { flex-wrap: wrap; overflow: auto; align-content: flex-start; }
+  #board.rows .card { height: max(360px, calc((100vh - 110px) / 2 - 14px)); min-height: 0; }
+  .rowbreak { flex-basis: 100%; height: 0; }
+  #board.rows .card:not(.tb) .photo.cut img { width: auto; height: 118%; }
+  #board.rows .comm { min-height: 40px; }
+  #board.rows .card.tb .photo { min-height: 90px; }
+  /* Mute: dicker roter Rahmen + Hinweis */
+  .card.muted::after { content: ""; position: absolute; inset: 0; border: 6px solid var(--crit); border-radius: 16px;
+                       z-index: 7; pointer-events: none; }
+  .mutepill { display: none; position: absolute; z-index: 5; left: 50%; transform: translateX(-50%); top: 92px;
+              background: var(--crit); color: #fff; font-weight: 900; font-size: 15px; letter-spacing: .5px;
+              padding: 5px 14px; border-radius: 7px; white-space: nowrap; box-shadow: 0 4px 14px rgba(0,0,0,.4); }
+  .card.muted .mutepill { display: block; }
+  /* In-Ear (AD PSM) */
+  .iem { display: none; margin: 4px 12px; padding: 5px 8px; border-radius: 8px; background: rgba(0,0,0,.28);
+         grid-template-columns: auto 1fr; gap: 2px 10px; align-items: center; font-size: 11px; font-weight: 800; }
+  .iem.on { display: grid; }
+  .iem .st { display: flex; align-items: center; gap: 6px; color: var(--dim); }
+  .iem .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+  .iem .nm { color: var(--faint); font-size: 10px; grid-column: 1; }
+  .iem .meters { grid-row: 1 / span 2; grid-column: 2; display: grid; gap: 4px; }
+  .iem .m { display: grid; grid-template-columns: 10px 1fr; gap: 4px; align-items: center; color: var(--faint); font-size: 9px; }
+  .iem .bar { height: 6px; border-radius: 3px; background: rgba(255,255,255,.08); overflow: hidden; }
+  .iem .bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--ok) 0%, var(--alert) 75%, var(--crit) 100%);
+                background-size: var(--full, 100px) 100%; }
+  .tools .brk { flex: 0 0 44px; }
+  .tools .brk.on { background: rgba(53,214,180,.25); color: var(--ok); }
+  .card .brklabel { display: none; position: absolute; left: 12px; bottom: 70px; z-index: 6; font-size: 11px; font-weight: 800; color: var(--ok); }
+  body.editing .card.brkon .brklabel { display: block; }
   .empty { color: var(--dim); margin: 40px auto; text-align: center; max-width: 420px; }
   .card { position: relative; flex: 1 0 200px; max-width: 300px; min-height: 480px;
           border-radius: 16px; overflow: hidden; border: 1.5px solid var(--status, var(--ok)); background: var(--panel);
@@ -96,7 +126,7 @@
   mark { background: transparent; color: var(--alert); font-weight: 800; }
   .badges { height: 30px; display: flex; justify-content: center; align-items: center; }
   .badge { font-size: 11px; font-weight: 800; padding: 3px 9px; border-radius: 5px; }
-  .graph { height: 84px; background: rgba(0,0,0,.35); }
+  .graph { height: 42px; background: rgba(0,0,0,.35); }   /* halbe Höhe */
   .graph svg { width: 100%; height: 100%; display: block; }
   .foot { padding: 6px 14px 10px; display: grid; grid-template-columns: 1fr auto; gap: 1px 8px; font-weight: 700; }
   .foot .a { font-size: 13px; }
@@ -144,6 +174,8 @@
     body { display: block; height: auto; }
     header { position: sticky; top: 0; }
     #banner { position: sticky; top: 0; }
+    #board.rows .card { height: auto; }
+    .rowbreak { display: none; }
     #board { flex-direction: column; overflow-x: hidden; }
     .card { max-width: none; height: auto; min-height: 0; flex: 0 0 auto; }
     .card .photo { height: 220px; flex: 0 0 auto; }
@@ -165,11 +197,10 @@
     <label for="kw">Mein Name</label><input id="kw" placeholder="z. B. Tjark, Tjarki" autocomplete="off">
   </div>
   <div class="spacer"></div>
-  <button id="sound" class="btn" title="Ton und Vibration bei Alarm">🔔 Ton aus</button>
   <button id="editBtn" class="btn" title="Wer erscheint und in welcher Reihenfolge – nur für dieses Gerät">✎ Dashboard anpassen</button>
 </header>
 <div id="banner"><img id="bimg" alt=""><div><div class="t" id="bt"></div><div class="q" id="bq"></div></div><div class="ack">TIPPEN = GESEHEN</div></div>
-<div id="editbar"><b>Dashboard anpassen</b><span>Kacheln ziehen oder mit ◀ ▶ verschieben · 👁 blendet ein/aus · gilt nur für dieses Gerät. Personen anlegen und löschen geht nur am ShowCom-Rechner.</span><button id="doneBtn" class="btn active">Fertig</button></div>
+<div id="editbar"><b>Dashboard anpassen</b><span>Kacheln ziehen oder mit ◀ ▶ verschieben · 👁 blendet ein/aus · ↵ = ab hier zweite Zeile · gilt nur für dieses Gerät. Personen anlegen und löschen geht nur am ShowCom-Rechner.</span><button id="doneBtn" class="btn active">Fertig</button></div>
 <main id="board"></main>
 
 <script>
@@ -178,9 +209,9 @@ const deviceId = location.pathname.split('/')[2];
 const api = p => `/api/d/${deviceId}/${p}`;
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const ACK_KEY = `showcom.ack.${deviceId}`, SOUND_KEY = 'showcom.sound';
+const ACK_KEY = `showcom.ack.${deviceId}`;
 
-let state = null, cards = new Map(), soundOn = localStorage.getItem(SOUND_KEY) === '1', audioCtx = null;
+let state = null, cards = new Map(), breaks = new Set();
 let ackId = Number(localStorage.getItem(ACK_KEY) || 0);
 let ackLive = new Set(), alertUser = '', alertKey = '', lastAlertKey = '', kwDirty = 0;
 
@@ -198,38 +229,28 @@ function battSvg(p) {
   return `<svg class="batt" viewBox="0 0 44 18"><rect x=".75" y=".75" width="39" height="16.5" rx="4" fill="none" stroke="${col}" stroke-width="1.5"/>` +
          `<rect x="41" y="5.5" width="3" height="7" rx="1" fill="${col}"/>${bars}</svg>`;
 }
-function graphSvg(h, col) {
+function lineSvg(h) {
+  if (!h || h.length < 2) return '';
+  const n = 120, pts = h.slice(-n), step = 100 / (n - 1), x0 = 100 - step * (pts.length - 1);
+  return `<polyline points="${pts.map((v, i) => `${(x0 + i * step).toFixed(2)},${(100 - v * .92).toFixed(1)}`).join(' ')}" ` +
+         `fill="none" stroke="rgba(255,255,255,.85)" stroke-width="1.1" vector-effect="non-scaling-stroke"/>`;
+}
+function graphSvg(h, col, level) {
+  if ((!h || h.length < 2) && level && level.length > 1)
+    return `<svg viewBox="0 0 100 100" preserveAspectRatio="none">${lineSvg(level)}</svg>`;
   if (!h || h.length < 2) return '';
   const n = 120, pts = h.slice(-n), step = 100 / (n - 1), x0 = 100 - step * (pts.length - 1);
   const xy = pts.map((v, i) => `${(x0 + i * step).toFixed(2)},${(100 - v * .92).toFixed(1)}`).join(' ');
   return `<svg viewBox="0 0 100 100" preserveAspectRatio="none"><defs><linearGradient id="g${col.replace(/\W/g,'')}" x1="0" y1="0" x2="0" y2="1">` +
          `<stop offset="0" stop-color="${col}" stop-opacity=".75"/><stop offset="1" stop-color="${col}" stop-opacity=".1"/></linearGradient></defs>` +
          `<polygon points="${x0.toFixed(2)},100 ${xy} 100,100" fill="url(#g${col.replace(/\W/g,'')})"/>` +
-         `<polyline points="${xy}" fill="none" stroke="${col}" stroke-width="1.2" vector-effect="non-scaling-stroke"/></svg>`;
+         `<polyline points="${xy}" fill="none" stroke="${col}" stroke-width="1.2" vector-effect="non-scaling-stroke"/>` +
+         (level ? lineSvg(level) : '') + `</svg>`;
 }
 const fmtMin = m => m >= 0 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m` : '';
 
-// --- Ton / Vibration ------------------------------------------------------
-function beep() {
-  if (navigator.vibrate) navigator.vibrate([250, 120, 250, 120, 250]);
-  if (!soundOn) return;
-  try {
-    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-    const t = audioCtx.currentTime;
-    for (let i = 0; i < 3; i++) {
-      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
-      o.frequency.value = 1046; o.connect(g); g.connect(audioCtx.destination);
-      g.gain.setValueAtTime(0.0001, t + i * .25); g.gain.exponentialRampToValueAtTime(.4, t + i * .25 + .02);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + i * .25 + .18); o.start(t + i * .25); o.stop(t + i * .25 + .2);
-    }
-  } catch (e) {}
-}
-function updateSoundBtn() { $('sound').textContent = soundOn ? '🔔 Ton an' : '🔕 Ton aus'; $('sound').classList.toggle('active', soundOn); }
-$('sound').onclick = () => {
-  soundOn = !soundOn; localStorage.setItem(SOUND_KEY, soundOn ? '1' : '0'); updateSoundBtn();
-  if (soundOn) { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); audioCtx.resume(); }
-};
-updateSoundBtn();
+// --- Vibration bei Alarm (kein Ton) -----------------------------------------
+function buzz() { if (navigator.vibrate) navigator.vibrate([250, 120, 250, 120, 250]); }
 
 // --- Einstellungen des Geräts ---------------------------------------------
 $('kw').addEventListener('input', () => { kwDirty = Date.now(); });
@@ -256,13 +277,23 @@ async function saveLayout() {
   layoutBusy = true;
   try {
     await fetch(api('layout'), { method: 'POST', body: JSON.stringify({
-      order: state.persons.map(p => p.id), hidden: state.persons.filter(p => !p.visible).map(p => p.id) }) });
+      order: state.persons.map(p => p.id), hidden: state.persons.filter(p => !p.visible).map(p => p.id), breaks: [...breaks] }) });
   } finally { layoutBusy = false; }
+}
+// Zeilenumbrüche hängen an der Position, nicht an der Person: beim Verschieben bleibt die zweite Zeile, wo sie ist
+function keepBreaks(fn) {
+  const pos = state.persons.map((p, i) => breaks.has(p.id) ? i : -1).filter(i => i > 0);
+  fn();
+  breaks = new Set(pos.map(i => state.persons[i].id));
 }
 function movePerson(id, delta) {
   const i = state.persons.findIndex(p => p.id === id), j = i + delta;
   if (i < 0 || j < 0 || j >= state.persons.length) return;
-  const [p] = state.persons.splice(i, 1); state.persons.splice(j, 0, p);
+  keepBreaks(() => { const [p] = state.persons.splice(i, 1); state.persons.splice(j, 0, p); });
+  render(); saveLayout();
+}
+function toggleBreak(id) {
+  if (breaks.has(id)) breaks.delete(id); else if (state.persons.findIndex(p => p.id === id) > 0) breaks.add(id);
   render(); saveLayout();
 }
 function toggleVisible(id) {
@@ -297,11 +328,21 @@ document.addEventListener('pointermove', e => {
   const board = $('board'), vertical = getComputedStyle(board).flexDirection === 'column';
   const others = [...board.querySelectorAll('.card:not(.dragging)')];
   let before = null;
-  for (const o of others) {
-    const r = o.getBoundingClientRect();
-    if (vertical ? e.clientY < r.top + r.height / 2 : e.clientX < r.left + r.width / 2) { before = o; break; }
+  if (board.classList.contains('rows') && !vertical) {
+    // zweizeilig: nächstgelegene Kachel, davor oder dahinter einsetzen
+    let best = null, bd = 1e9;
+    for (const o of others) {
+      const r = o.getBoundingClientRect(), d = Math.hypot(e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2));
+      if (d < bd) { bd = d; best = o; }
+    }
+    if (best) { const r = best.getBoundingClientRect(); before = e.clientX < r.left + r.width / 2 ? best : best.nextSibling; }
+  } else {
+    for (const o of others) {
+      const r = o.getBoundingClientRect();
+      if (vertical ? e.clientY < r.top + r.height / 2 : e.clientX < r.left + r.width / 2) { before = o; break; }
+    }
   }
-  if (before !== drag.slot.nextSibling) board.insertBefore(drag.slot, before);
+  if (before !== drag.slot.nextSibling && before !== drag.slot) board.insertBefore(drag.slot, before);
 
   // am Rand automatisch scrollen
   if (!vertical) { const b = board.getBoundingClientRect();
@@ -316,7 +357,7 @@ function endDrag() {
   d.card.removeAttribute('style'); d.card.style.setProperty('--c', d.card._c);
   d.slot.replaceWith(d.card);
   const ids = [...$('board').querySelectorAll('.card')].map(c => c.dataset.id);
-  state.persons.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+  keepBreaks(() => state.persons.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id)));
   render(); saveLayout();
 }
 document.addEventListener('pointerup', endDrag);
@@ -353,7 +394,7 @@ function checkAlert() {
 
   // gleiche Ansage (Live -> Endergebnis) nur einmal piepen
   const soundKey = a.user + ':' + a.utterance;
-  if (soundKey !== lastAlertKey) { lastAlertKey = soundKey; beep(); }
+  if (soundKey !== lastAlertKey) { lastAlertKey = soundKey; buzz(); }
 }
 
 // --- Kacheln -------------------------------------------------------------------
@@ -364,9 +405,12 @@ function cardFor(p) {
   c.className = 'card';
   c.dataset.id = p.id;
   c.innerHTML = `<div class="bgfx"></div><div class="head"></div><div class="photo"></div><div class="lower">` +
-                `<div class="comm"></div><div class="badges"></div><div class="graph"></div><div class="foot"></div></div>` +
+                `<div class="comm"></div><div class="iem"></div><div class="badges"></div><div class="graph"></div><div class="foot"></div></div>` +
+                `<div class="mutepill"></div><div class="brklabel">↵ NEUE ZEILE</div>` +
                 `<div class="grip" aria-hidden="true">✥</div>` +
-                `<div class="tools"><button class="left" title="nach vorn">◀</button><button class="eye"></button><button class="right" title="nach hinten">▶</button></div>`;
+                `<div class="tools"><button class="left" title="nach vorn">◀</button><button class="eye"></button>` +
+                `<button class="brk" title="Ab dieser Kachel eine neue Zeile">↵</button><button class="right" title="nach hinten">▶</button></div>`;
+  c.querySelector('.brk').onclick = () => toggleBreak(p.id);
   c.querySelector('.left').onclick = () => movePerson(p.id, -1);
   c.querySelector('.right').onclick = () => movePerson(p.id, 1);
   c.querySelector('.eye').onclick = () => toggleVisible(p.id);
@@ -387,11 +431,26 @@ function render() {
   }
   if (board.querySelector('.empty')) board.innerHTML = '';
 
-  // Reihenfolge dieses Geräts (kommt so vom Server)
+  // Reihenfolge dieses Geräts (kommt so vom Server), Zeilenumbrüche als eigene Elemente
+  const wanted = [];
+  visible.forEach((p, i) => {
+    if (i > 0 && breaks.has(p.id)) {
+      let br = board.querySelector(`.rowbreak[data-for="${p.id}"]`);
+      if (!br) { br = document.createElement('div'); br.className = 'rowbreak'; br.dataset.for = p.id; }
+      wanted.push(br);
+    }
+    wanted.push(cardFor(p));
+  });
+  board.classList.toggle('rows', wanted.some(el => el.classList.contains('rowbreak')));
+  wanted.forEach((el, k) => { if (board.children[k] !== el) board.insertBefore(el, board.children[k] || null); });
+  [...board.children].forEach(el => { if (!wanted.includes(el)) el.remove(); });
+
   visible.forEach((p, i) => {
     const c = cardFor(p);
-    if (board.children[i] !== c) board.insertBefore(c, board.children[i] || null);
     updateCard(c, p, i);
+    c.classList.toggle('brkon', i > 0 && breaks.has(p.id));
+    c.querySelector('.brk').classList.toggle('on', i > 0 && breaks.has(p.id));
+    c.querySelector('.brk').disabled = i === 0;
     c.classList.toggle('hiddenp', !p.visible);
     const eye = c.querySelector('.eye');
     eye.textContent = p.visible ? '👁 An' : '🚫 Aus';
@@ -399,13 +458,12 @@ function render() {
     c.querySelector('.left').disabled = i === 0;
     c.querySelector('.right').disabled = i === visible.length - 1;
   });
-  [...board.children].forEach(el => { if (!visible.some(p => cards.get(p.id) === el)) { el.remove(); } });
 }
 
 function updateCard(c, p, index) {
-  const rf = p.rf || {}, hasRf = rf.assigned && rf.online && rf.known;
+  const rf = p.rf || {}, hasRf = rf.assigned && !rf.disabled && rf.online && rf.known;
   const batt = hasRf && rf.txOn ? rf.battery : -1;
-  const txOff = hasRf && !rf.txOn, offline = rf.assigned && !rf.online;
+  const txOff = hasRf && !rf.txOn, offline = rf.assigned && !rf.disabled && !rf.online;
   const critical = hasRf && rf.txOn && batt >= 0 && (batt <= 15 || (rf.minutes >= 0 && rf.minutes < 30));
   const weak = hasRf && rf.txOn && rf.signal < .2;
   const warning = !critical && hasRf && rf.txOn && ((batt >= 0 && batt <= 35) || weak);
@@ -413,6 +471,28 @@ function updateCard(c, p, index) {
   const statusHex = critical ? '#ff4d6d' : warning ? '#ffb020' : (txOff || offline) ? '#6c6f76' : '#35d6b4';
 
   c.classList.toggle('tb', p.talkback);
+
+  // Mute: AF/RF am Mikrofon-Sender, RF am In-Ear-Sender
+  const iem = p.iem, iemRfOff = !!(iem && iem.online && !iem.rfOn);
+  const what = [];
+  if (p.afMuted || p.rfMuted) what.push(p.afMuted && p.rfMuted ? 'AF + RF' : p.afMuted ? 'AF' : 'RF');
+  if (iemRfOff) what.push('IEM RF');
+  c.classList.toggle('muted', what.length > 0);
+  const mute = what.length ? 'MUTE  ' + what.join('  ·  ') : '';
+  if (c._mute !== mute) { c.querySelector('.mutepill').textContent = mute; c._mute = mute; }
+
+  const iemEl = c.querySelector('.iem');
+  iemEl.classList.toggle('on', !!iem);
+  if (iem) {
+    const col = iem.disabled || !iem.online ? 'var(--faint)' : iem.rfOn ? 'var(--ok)' : 'var(--crit)';
+    const txt = iem.disabled ? 'aus' : !iem.online ? 'offline' : iem.rfOn ? 'RF AN' : 'RF AUS';
+    const pct = v => v === undefined ? 0 : Math.max(0, Math.min(100, (v + 60) / 60 * 100));
+    const html = `<div class="st">IEM <span class="dot" style="background:${col}"></span><span style="color:${col}">${txt}</span></div>` +
+                 `<div class="meters"><div class="m">L<div class="bar"><i style="width:${pct(iem.l)}%"></i></div></div>` +
+                 `<div class="m">R<div class="bar"><i style="width:${pct(iem.r)}%"></i></div></div></div>` +
+                 `<div class="nm">${esc(iem.name || '')}</div>`;
+    if (c._iem !== html) { iemEl.innerHTML = html; c._iem = html; }
+  }
   c.classList.toggle('speaking', !!p.speaking);
   c.style.setProperty('--c', p.colour); c._c = p.colour;
   c.style.setProperty('--status', status);
@@ -452,15 +532,19 @@ function updateCard(c, p, index) {
   const badge = critical ? ['AKKU KRITISCH', 'var(--crit)', '#fff'] : txOff ? ['SENDER AUS', 'rgba(108,111,118,.6)', 'var(--text)']
               : offline ? ['EMPFÄNGER OFFLINE', 'rgba(108,111,118,.6)', 'var(--text)'] : weak ? ['SCHWACHES SIGNAL', 'var(--alert)', 'var(--bg)']
               : warning ? ['AKKU NIEDRIG', 'var(--alert)', 'var(--bg)'] : p.speaking ? ['SPRICHT', p.colour, 'var(--bg)']
-              : (hasRf && rf.muted) ? ['STUMM', 'rgba(108,111,118,.6)', 'var(--text)'] : null;
+              : rf.disabled ? ['ÜBERWACHUNG AUS', 'rgba(108,111,118,.6)', 'var(--text)'] : null;
   const bhtml = badge ? `<span class="badge" style="background:${badge[1]};color:${badge[2]}">${badge[0]}</span>` : '';
   if (c._badge !== bhtml) { c.querySelector('.badges').innerHTML = bhtml; c._badge = bhtml; }
 
-  c.querySelector('.graph').innerHTML = rf.assigned ? graphSvg((rf.history || []).map(v => v), statusHex) : '';
-  c.querySelector('.graph').style.display = rf.assigned ? '' : 'none';
+  const level = p.level || null;   // 0..100 wie der HF-Verlauf
+  const showGraph = (rf.assigned && !rf.disabled) || !!level;
+  c.querySelector('.graph').innerHTML = showGraph ? graphSvg(rf.history || [], statusHex, level) : '';
+  c.querySelector('.graph').style.display = showGraph ? '' : 'none';
 
   let foot;
-  if (rf.assigned) {
+  if (rf.assigned && rf.disabled) {
+    foot = `<div class="a" style="color:var(--dim)">Funk: Überwachung aus</div><div class="b"></div><div class="c" style="color:var(--faint)">in den Einstellungen deaktiviert</div><div class="d"></div>`;
+  } else if (rf.assigned) {
     const level = hasRf && rf.txOn ? (rf.dbm !== undefined ? rf.dbm + ' dBm' : rf.quality !== undefined ? 'RF ' + rf.quality + ' %' : '') : '';
     const parts = [rf.model, batt >= 0 ? batt + '%' : '', hasRf && rf.txOn ? fmtMin(rf.minutes) : '', offline ? 'keine Verbindung' : ''].filter(Boolean);
     foot = `<div class="a">${hasRf && rf.freq ? (rf.freq / 1000).toFixed(3) + ' MHz' : '–'}</div><div class="b">${level}</div>` +
@@ -480,6 +564,7 @@ async function poll() {
     const r = await fetch(api('state'), { cache: 'no-store' });
     if (r.status === 404) { localStorage.removeItem('showcom.device'); location.replace('/'); return; }
     state = await r.json();
+    if (!editing) breaks = new Set(state.persons.filter(p => p.rowBreak).map(p => p.id));
 
     $('devlabel').textContent = (state.device.label || 'TALKBACK LOG').toUpperCase();
     if (document.activeElement !== $('kw') && !kwDirty) $('kw').value = state.device.keywords || '';

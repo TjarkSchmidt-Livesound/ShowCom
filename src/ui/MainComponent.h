@@ -93,6 +93,7 @@ private:
     juce::Label statusLabel;
     juce::Rectangle<int> headerArea, presenceArea;
     juce::String lastPresence;
+    juce::String extraTabUser;   // vom Board geöffnete Person ohne Favoriten-Stern
     AlertBanner banner { app };
     SetupBar setupBar;
     std::function<void()> setupAction;

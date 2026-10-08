@@ -131,6 +131,23 @@ UserEditor::UserEditor (AppController& a) : app (a)
     rfBox.onChange = [this] { commit(); };
     addAndMakeVisible (rfBox);
 
+    iemLabel.setFont (Theme::font (13.0f, true));
+    iemLabel.setColour (juce::Label::textColourId, Theme::textDim);
+    addAndMakeVisible (iemLabel);
+    iemBox.onChange = [this] { commit(); };
+    iemBox.setTooltip (Theme::txt ("Shure Axient Digital PSM: zeigt, ob der In-Ear-Sender HF abstrahlt, und seinen Eingangspegel"));
+    addAndMakeVisible (iemBox);
+
+    favoriteToggle.setButtonText (Theme::txt ("Favorit – oben in der Leiste und als eigener Tab"));
+    favoriteToggle.onClick = [this] { commit(); };
+    addAndMakeVisible (favoriteToggle);
+
+    wirelessLevelToggle.setButtonText (Theme::txt ("Pegel direkt von der Funkstrecke anzeigen"));
+    wirelessLevelToggle.setTooltip (Theme::txt ("Der Verlauf auf der Kachel zeigt den Audiopegel, den der Funkempfänger meldet – "
+                                                "ohne Kabel zum Audio-Interface. Bei Personen ohne Talkback automatisch."));
+    wirelessLevelToggle.onClick = [this] { commit(); };
+    addAndMakeVisible (wirelessLevelToggle);
+
     thresholdSlider.setRange (-72.0, -6.0, 1.0);
     thresholdSlider.setTextValueSuffix (" dB");
     thresholdSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 70, 24);
@@ -183,6 +200,8 @@ void UserEditor::setUser (const juce::String& id)
     roleEditor.setText (u->role, false);
     thresholdSlider.setValue (u->thresholdDb, juce::dontSendNotification);
     talkbackToggle.setToggleState (u->talkbackLog, juce::dontSendNotification);
+    favoriteToggle.setToggleState (u->favorite, juce::dontSendNotification);
+    wirelessLevelToggle.setToggleState (u->levelFromWireless, juce::dontSendNotification);
     cutoutToggle.setToggleState (u->cutout, juce::dontSendNotification);
     refreshChannels();
     refreshRfList();
@@ -239,37 +258,51 @@ void UserEditor::refreshChannels()
 void UserEditor::refreshRfList()
 {
     auto* u = app.state.findUser (userId);
-    if (u == nullptr || rfBox.isPopupActive())
+    if (u == nullptr || rfBox.isPopupActive() || iemBox.isPopupActive())
         return;
 
     const juce::ScopedValueSetter<bool> svs (loading, true);
-    rfRefs = app.wireless.listChannels();
+    const auto all = app.wireless.listChannels();
 
-    rfBox.clear (juce::dontSendNotification);
-    rfBox.addItem (Theme::txt ("– keine Funkstrecke –"), 1);
-
-    int selected = 1;
-    for (size_t i = 0; i < rfRefs.size(); ++i)
+    // Mikrofon-Funkstrecken (Empfänger) und In-Ear-Sender getrennt
+    auto fill = [&] (juce::ComboBox& box, std::vector<WirelessManager::ChannelRef>& refs, bool iem,
+                     const juce::String& curDevice, int curChannel, const juce::String& none)
     {
-        auto label = rfRefs[i].label;
-        for (auto& other : app.state.getUsers())
-            if (other.id != userId && other.rfDeviceId == rfRefs[i].deviceId && other.rfChannel == rfRefs[i].channel)
-                label << "   [" << other.name << "]";
+        refs.clear();
+        for (auto& r : all)
+            if (r.iem == iem)
+                refs.push_back (r);
 
-        rfBox.addItem (label, (int) i + 2);
-        if (rfRefs[i].deviceId == u->rfDeviceId && rfRefs[i].channel == u->rfChannel)
-            selected = (int) i + 2;
-    }
+        box.clear (juce::dontSendNotification);
+        box.addItem (none, 1);
 
-    if (selected == 1 && u->rfDeviceId.isNotEmpty())
-    {
-        // Gerät gerade nicht in der Liste (gelöscht/umbenannt): Zuordnung trotzdem anzeigen
-        rfRefs.push_back ({ u->rfDeviceId, u->rfChannel, Theme::txt ("Gerät nicht gefunden · Kanal ") + juce::String (u->rfChannel) });
-        rfBox.addItem (rfRefs.back().label, (int) rfRefs.size() + 1);
-        selected = (int) rfRefs.size() + 1;
-    }
+        int selected = 1;
+        for (size_t i = 0; i < refs.size(); ++i)
+        {
+            auto label = refs[i].label;
+            for (auto& other : app.state.getUsers())
+                if (other.id != userId && ((! iem && other.rfDeviceId == refs[i].deviceId && other.rfChannel == refs[i].channel)
+                                           || (iem && other.iemDeviceId == refs[i].deviceId && other.iemChannel == refs[i].channel)))
+                    label << "   [" << other.name << "]";
 
-    rfBox.setSelectedId (selected, juce::dontSendNotification);
+            box.addItem (label, (int) i + 2);
+            if (refs[i].deviceId == curDevice && refs[i].channel == curChannel)
+                selected = (int) i + 2;
+        }
+
+        if (selected == 1 && curDevice.isNotEmpty())
+        {
+            // Gerät gerade nicht in der Liste (gelöscht/umbenannt): Zuordnung trotzdem anzeigen
+            refs.push_back ({ curDevice, curChannel, Theme::txt ("Gerät nicht gefunden · Kanal ") + juce::String (curChannel), iem });
+            box.addItem (refs.back().label, (int) refs.size() + 1);
+            selected = (int) refs.size() + 1;
+        }
+
+        box.setSelectedId (selected, juce::dontSendNotification);
+    };
+
+    fill (rfBox, rfRefs, false, u->rfDeviceId, u->rfChannel, Theme::txt ("– keine Funkstrecke –"));
+    fill (iemBox, iemRefs, true, u->iemDeviceId, u->iemChannel, Theme::txt ("– kein In-Ear-Sender –"));
 }
 
 UserProfile UserEditor::current() const
@@ -288,6 +321,20 @@ void UserEditor::commit()
     u.role = roleEditor.getText().trim();
     u.channel = channelBox.getSelectedId() - 2;
     u.talkbackLog = talkbackToggle.getToggleState();
+    u.favorite = favoriteToggle.getToggleState();
+    u.levelFromWireless = wirelessLevelToggle.getToggleState();
+
+    const int iemIndex = iemBox.getSelectedId() - 2;
+    if (iemIndex >= 0 && iemIndex < (int) iemRefs.size())
+    {
+        u.iemDeviceId = iemRefs[(size_t) iemIndex].deviceId;
+        u.iemChannel = iemRefs[(size_t) iemIndex].channel;
+    }
+    else
+    {
+        u.iemDeviceId = {};
+        u.iemChannel = 0;
+    }
     u.cutout = cutoutToggle.getToggleState();
 
     const int rfIndex = rfBox.getSelectedId() - 2;
@@ -456,7 +503,8 @@ void UserEditor::resized()
         cutoutToggle.setBounds (row.removeFromLeft (220));
         cutoutStatusArea = row;
     }
-    b.removeFromTop (14);
+    b.removeFromTop (6);
+    favoriteToggle.setBounds (b.removeFromTop (26));
 
     talkbackToggle.setBounds (b.removeFromTop (26));
     b.removeFromTop (4);
@@ -466,6 +514,9 @@ void UserEditor::resized()
 
     rfLabel.setBounds (b.removeFromTop (20));
     rfBox.setBounds (b.removeFromTop (34));
+    wirelessLevelToggle.setBounds (b.removeFromTop (26));
+    iemLabel.setBounds (b.removeFromTop (20));
+    iemBox.setBounds (b.removeFromTop (34));
     rfStatusArea = b.removeFromTop (22);
     b.removeFromTop (6);
 
@@ -476,10 +527,13 @@ void UserEditor::resized()
     b.removeFromTop (26);
 
     colourLabel.setBounds (b.removeFromTop (20));
-    swatchArea = b.removeFromTop (34).withWidth (400);
+    {
+        // Farbe und "Person entfernen" in einer Zeile – die Liste ist lang geworden
+        auto row = b.removeFromTop (34);
+        deleteButton.setBounds (row.removeFromRight (170));
+        swatchArea = row.withWidth (juce::jmin (400, row.getWidth() - 10));
+    }
     b.removeFromTop (14);
-
-    deleteButton.setBounds (b.removeFromBottom (34).removeFromRight (170));
     hintArea = b.withTrimmedBottom (10);
 }
 
@@ -568,9 +622,21 @@ void UsersPanel::paintListBoxItem (int row, juce::Graphics& g, int width, int he
     Theme::drawAvatar (g, b.removeFromLeft (b.getHeight()).toFloat(), app.state.getAvatar (u.id), u.name, u.colour, speaking);
     b.removeFromLeft (12);
 
-    g.setColour (Theme::text);
-    g.setFont (Theme::font (16.0f, true));
-    g.drawText (u.name, b.removeFromTop (22), juce::Justification::centredLeft, true);
+    {
+        auto nameRow = b.removeFromTop (22);
+        if (u.favorite)
+        {
+            // Stern für Favoriten
+            auto star = nameRow.removeFromRight (18).toFloat().withSizeKeepingCentre (14.0f, 14.0f);
+            juce::Path p;
+            p.addStar (star.getCentre(), 5, 3.0f, 7.0f, -juce::MathConstants<float>::pi / 2.0f + juce::MathConstants<float>::pi / 5.0f);
+            g.setColour (Theme::alert);
+            g.fillPath (p);
+        }
+        g.setColour (Theme::text);
+        g.setFont (Theme::font (16.0f, true));
+        g.drawText (u.name, nameRow, juce::Justification::centredLeft, true);
+    }
 
     juce::String sub;
     if (u.role.isNotEmpty())

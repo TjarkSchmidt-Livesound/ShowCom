@@ -39,8 +39,29 @@
 
   if (id) { location.replace('/d/' + id); return; }
 
+  // Gerätename für den Host: Gerätetyp + Browser (der Host ergänzt den Netzwerknamen, falls er ihn findet)
+  async function deviceName() {
+    const ua = navigator.userAgent;
+    let model = '';
+    try {
+      if (navigator.userAgentData && navigator.userAgentData.getHighEntropyValues) {
+        const h = await navigator.userAgentData.getHighEntropyValues(['model', 'platform']);
+        model = (h.model || '').trim();   // nur Android liefert hier einen echten Gerätenamen
+      }
+    } catch (e) {}
+    if (!model) {
+      model = /iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) ? 'iPad'
+            : /iPhone/.test(ua) ? 'iPhone'
+            : /Android/.test(ua) ? ((ua.match(/Android[^;]*;\s*([^;)]+?)(?:\sBuild|\))/) || [])[1] || 'Android')
+            : /Macintosh/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows-PC' : /Linux/.test(ua) ? 'Linux' : 'Gerät';
+    }
+    const browser = /Edg\//.test(ua) ? 'Edge' : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome'
+                  : /Safari\//.test(ua) ? 'Safari' : '';
+    return (model + (browser ? ' · ' + browser : '')).slice(0, 40);
+  }
+
   try {
-    const r = await fetch('/api/register', { method: 'POST' });
+    const r = await fetch('/api/register', { method: 'POST', body: JSON.stringify({ name: await deviceName() }) });
     const j = await r.json();
     localStorage.setItem(KEY, j.id);
     location.replace('/d/' + j.id);

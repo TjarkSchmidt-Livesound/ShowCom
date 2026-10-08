@@ -2,18 +2,23 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <map>
+#include <set>
 #include <vector>
 
 /** Ein Funkempfänger im Netzwerk. */
 struct WirelessDeviceConfig
 {
-    enum class Type { shure, sennheiserEwdx, simulated };
+    enum class Type { shure, sennheiserEwdx, simulated, shurePsm, simulatedPsm };
 
     juce::String id;            // stabil, UUID
     Type type = Type::shure;
     juce::String host;          // IP-Adresse oder Hostname
     juce::String label;         // frei, z. B. "Rack links"
     int numChannels = 0;        // 0 = automatisch
+    bool enabled = true;        // aus = nicht verbinden, nicht überwachen
+    std::set<int> disabledChannels;   // einzelne Kanäle (Empfänger bzw. Sender) nicht überwachen
+
+    bool isPsm() const          { return type == Type::shurePsm || type == Type::simulatedPsm; }
 };
 
 /** Eine Person am Talkback (FOH, Monitor, Licht, Stage-Manager ...). */
@@ -30,6 +35,10 @@ struct UserProfile
     juce::String rfDeviceId;    // zugewiesene Funkstrecke (leer = keine)
     int rfChannel = 0;          // Empfängerkanal 1..4
     bool cutout = true;         // Profilbild freistellen (Hintergrund ausblenden)
+    bool favorite = true;       // oben in der Kopfleiste und als eigener Tab zeigen
+    bool levelFromWireless = false;   // Pegelverlauf vom Funkempfänger statt vom Audio-Interface
+    juce::String iemDeviceId;   // In-Ear-Sender (Shure Axient Digital PSM)
+    int iemChannel = 0;
 };
 
 struct AppSettings
@@ -47,6 +56,7 @@ struct AppSettings
     bool liveText = true;               // Zwischenstände schon während des Sprechens
     juce::StringArray boardOrder;       // eigene Reihenfolge der Kacheln am Host (Personen-IDs)
     juce::StringArray boardHidden;      // am Host ausgeblendete Kacheln
+    juce::StringArray boardBreaks;      // Personen, mit denen eine neue Zeile beginnt
     juce::String audioDeviceState;      // XML von AudioDeviceManager
     std::vector<WirelessDeviceConfig> wirelessDevices;
 };
@@ -89,6 +99,7 @@ public:
 
     /** Speichert Reihenfolge/Sichtbarkeit. Meldet nur über boardLayoutChanged (kein Neuaufbau von Audio/Web). */
     void setBoardLayout (const juce::StringArray& order, const juce::StringArray& hidden);
+    void setBoardBreaks (const juce::StringArray& breaks);
     juce::ChangeBroadcaster boardLayoutChanged;
 
     // --- Avatare --------------------------------------------------------------

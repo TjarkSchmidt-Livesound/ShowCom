@@ -71,6 +71,10 @@ private:
     juce::Label rfLabel { {}, "Funkstrecke" };
     juce::ComboBox rfBox;
     std::vector<WirelessManager::ChannelRef> rfRefs;
+    juce::Label iemLabel { {}, "In-Ear-Sender (Shure AD PSM)" };
+    juce::ComboBox iemBox;
+    std::vector<WirelessManager::ChannelRef> iemRefs;
+    juce::ToggleButton favoriteToggle, wirelessLevelToggle;
     juce::Slider thresholdSlider { juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight };
     juce::Rectangle<int> meterArea, swatchArea, hintArea, rfStatusArea;
     juce::TextButton deleteButton { "Person entfernen" };

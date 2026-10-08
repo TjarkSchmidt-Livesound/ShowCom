@@ -286,12 +286,26 @@ void AppController::timerCallback()
         p.rfAssigned = rf.assigned;
         p.rfOnline = rf.online;
         p.rfKnown = rf.known;
+        p.rfDisabled = rf.disabled;
         p.rf = rf.state;
         if (rf.history != nullptr)
         {
             const int n = juce::jmin ((int) rf.history->size(), 120);   // 30 s
             p.history.assign (rf.history->end() - n, rf.history->end());
         }
+        // Pegel direkt von der Funkstrecke (gewählt oder Person ohne Talkback-Eingang)
+        if (rf.audioHistory != nullptr && (u.levelFromWireless || ! AppState::logsTalkback (u)))
+        {
+            const int n = juce::jmin ((int) rf.audioHistory->size(), 120);
+            p.level.assign (rf.audioHistory->end() - n, rf.audioHistory->end());
+        }
+
+        const auto iem = getIemInfo (u);
+        p.iemAssigned = iem.assigned;
+        p.iemOnline = iem.online;
+        p.iemKnown = iem.known;
+        p.iemDisabled = iem.disabled;
+        p.iem = iem.state;
 
         // Avatar als PNG, nur neu kodieren, wenn sich das Bild geändert hat
         if (u.avatarFile.isNotEmpty())
@@ -354,16 +368,52 @@ AppController::RfInfo AppController::getRfInfo (const UserProfile& u) const
         deviceId = WirelessManager::demoDeviceId;
     }
 
+    juce::ignoreUnused (info);
+    return fillRfInfo (deviceId, channel);
+}
+
+AppController::RfInfo AppController::fillRfInfo (const juce::String& deviceId, int channel) const
+{
+    RfInfo info;
     if (deviceId.isEmpty() || channel <= 0)
         return info;
 
     info.assigned = true;
+    info.disabled = wireless.isDisabled (deviceId, channel);
+    if (info.disabled)
+        return info;
+
     const auto status = wireless.getStatus (deviceId);
     info.online = status.online;
     info.deviceName = status.model;
     info.known = wireless.getChannel (deviceId, channel, info.state);
     info.history = wireless.getHistory (deviceId, channel);
+    info.audioHistory = wireless.getAudioHistory (deviceId, channel);
     return info;
+}
+
+AppController::RfInfo AppController::getIemInfo (const UserProfile& u) const
+{
+    auto deviceId = u.iemDeviceId;
+    int channel = u.iemChannel;
+
+    if (deviceId.isEmpty() && demoMode)
+    {
+        // Demo: Bühnenpersonen bekommen einen In-Ear-Sender
+        const auto& users = state.getUsers();
+        int n = 0;
+        for (size_t i = 0; i < users.size(); ++i)
+        {
+            const bool stage = ! users[i].talkbackLog || users[i].role.containsIgnoreCase ("stage");
+            if (stage && ++n <= 4 && users[i].id == u.id)
+            {
+                deviceId = WirelessManager::demoPsmDeviceId;
+                channel = n;
+            }
+        }
+    }
+
+    return fillRfInfo (deviceId, channel);
 }
 
 void AppController::injectDemoConversation()

@@ -186,6 +186,41 @@ static void testShure()
         CHECK (std::abs (s.audioDb - (-18.0f)) < 0.01f);
     }
     {
+        // Mute getrennt nach AF und RF (Axient Digital)
+        ShureParser p;
+        p.feed ("< REP MODEL {AD4Q} >< REP 1 TX_MODEL ADX2 >< REP 1 SLOT_TX_MODEL 1 ADX2 >< REP 1 TX_MUTE_MODE_STATUS MUTE >");
+        CHECK (p.getChannels().at (1).afMuted && ! p.getChannels().at (1).rfMuted && p.getChannels().at (1).muted);
+        p.feed ("< REP 1 TX_MUTE_MODE_STATUS ON >< REP 1 SLOT_RF_OUTPUT 1 RF_MUTE >");
+        CHECK (! p.getChannels().at (1).afMuted && p.getChannels().at (1).rfMuted);
+        p.feed ("< REP 1 SLOT_RF_OUTPUT 1 RF_ON >< REP 1 AUDIO_MUTE ON >");
+        CHECK (p.getChannels().at (1).afMuted && ! p.getChannels().at (1).rfMuted);
+        p.feed ("< REP 1 AUDIO_MUTE OFF >");
+        CHECK (! p.getChannels().at (1).muted);
+
+        // QLX-D: Mute-Taste am Sender
+        ShureParser q;
+        q.feed ("< REP MODEL {QLXD4} >< REP 1 TX_TYPE QLXD2 >< REP 1 TX_MUTE_STATUS ON >");
+        CHECK (q.getChannels().at (1).afMuted);
+
+        // SLX-D+ wird wie SLX-D behandelt
+        ShureParser sp;
+        sp.feed ("< REP MODEL {SLXD4D+} >");
+        CHECK (sp.getFamily() == ShureParser::Family::slxd);
+    }
+    {
+        // Axient Digital PSM (Befehlsliste nicht veröffentlicht – Muster wie Axient Digital)
+        ShureParser p;
+        p.feed ("< REP MODEL {ADTQ} >< REP 2 CHAN_NAME {IEM Gitarre} >< REP 2 RF_OUTPUT RF_ON >"
+                "< SAMPLE 2 ALL 100 094 >< REP 2 SOMETHING_NEW 5 >");
+        const auto& s = p.getChannels().at (2);
+        CHECK (p.getFamily() == ShureParser::Family::adPsm);
+        CHECK (s.isIemTransmitter && s.rfOn && ! s.rfMuted && s.name == "IEM Gitarre");
+        CHECK (std::abs (s.inputLeftDb - (-20.0f)) < 0.01f && std::abs (s.inputRightDb - (-26.0f)) < 0.01f);
+        CHECK (p.getUnknownKeys().count ("SOMETHING_NEW") == 1);
+        p.feed ("< REP 2 RF_OUTPUT RF_MUTE >");
+        CHECK (! p.getChannels().at (2).rfOn && p.getChannels().at (2).rfMuted);
+    }
+    {
         ShureParser p;
         CHECK (p.feed ("garbage without brackets").empty());
         CHECK (p.feed ("< ERR >").empty());

@@ -4,6 +4,15 @@
 
 #include <BinaryData.h>
 
+#if JUCE_WINDOWS
+ #include <winsock2.h>
+ #include <ws2tcpip.h>
+#else
+ #include <arpa/inet.h>
+ #include <netdb.h>
+ #include <sys/socket.h>
+#endif
+
 namespace
 {
     constexpr int maxRequestBytes = 64 * 1024;
@@ -36,6 +45,7 @@ namespace
     {
         auto* o = new juce::DynamicObject();
         o->setProperty ("assigned", p.rfAssigned);
+        o->setProperty ("disabled", p.rfDisabled);
         o->setProperty ("online", p.rfOnline);
         o->setProperty ("known", p.rfKnown);
 
@@ -74,6 +84,25 @@ WebServer::WebServer()
 WebServer::~WebServer()
 {
     configure (false, 0);
+    lookupPool.removeAllJobs (true, 3000);
+}
+
+juce::String WebServer::reverseLookup (const juce::String& ip)
+{
+    sockaddr_in sa {};
+    sa.sin_family = AF_INET;
+    if (inet_pton (AF_INET, ip.toRawUTF8(), &sa.sin_addr) != 1)
+        return {};
+
+    char host[NI_MAXHOST] = {};
+    if (getnameinfo (reinterpret_cast<sockaddr*> (&sa), sizeof (sa), host, sizeof (host), nullptr, 0, NI_NAMEREQD) != 0)
+        return {};
+
+    // Nur den Gerätenamen, ohne Domain (fritz.box, local, lan ...)
+    auto name = juce::String::fromUTF8 (host).upToFirstOccurrenceOf (".", false, false).trim();
+    if (name.isEmpty() || name.containsOnly ("0123456789-"))
+        return {};
+    return name.substring (0, 40);
 }
 
 void WebServer::setDevicesFile (const juce::File& f)
@@ -237,7 +266,7 @@ void WebServer::serve (std::unique_ptr<juce::StreamingSocket> socket)
                                        juce::jmin (contentLength, (int) data.getSize() - bodyStart));
 
     const auto res = contentLength >= maxRequestBytes ? textResponse ("too large", 413, "text/plain")
-                                                      : handle (method, target, body);
+                                                      : handle (method, target, body, socket->getHostName());
 
     juce::String header;
     header << "HTTP/1.1 " << res.status << " " << reasonPhrase (res.status) << "\r\n"
@@ -268,7 +297,8 @@ WebServer::Response WebServer::jsonResponse (const juce::var& v, int code) const
     return textResponse (juce::JSON::toString (v, true), code, "application/json; charset=utf-8");
 }
 
-WebServer::Response WebServer::handle (const juce::String& method, const juce::String& target, const juce::String& body)
+WebServer::Response WebServer::handle (const juce::String& method, const juce::String& target, const juce::String& body,
+                                       const juce::String& clientAddress)
 {
     const auto path = target.upToFirstOccurrenceOf ("?", false, false);
     auto parts = juce::StringArray::fromTokens (path, "/", "");
@@ -324,8 +354,12 @@ WebServer::Response WebServer::handle (const juce::String& method, const juce::S
     // --- API -------------------------------------------------------------------------
     if (method == "POST" && path == "/api/register")
     {
+        // Das Gerät schickt einen Namen aus dem Browser mit (z. B. "iPad · Safari");
+        // der Host versucht zusätzlich den Netzwerknamen (z. B. "Tjarks-iPad") herauszufinden.
+        const auto json = juce::JSON::parse (body);
+        const auto hint = json.isObject() ? json["name"].toString() : juce::String();
         auto* o = new juce::DynamicObject();
-        o->setProperty ("id", createDevice());
+        o->setProperty ("id", createDevice (hint, clientAddress));
         return jsonResponse (juce::var (o));
     }
 
@@ -353,7 +387,7 @@ WebServer::Response WebServer::handle (const juce::String& method, const juce::S
 
             const juce::ScopedLock sl (devicesLock);
             auto& d = devices[id];
-            if (json.hasProperty ("label"))    d.label = json["label"].toString().substring (0, 40).trim();
+            // Der Gerätename wird nur am Host geändert
             if (json.hasProperty ("keywords")) d.keywords = json["keywords"].toString().substring (0, 200);
             saveDevices();
             return jsonResponse (juce::var (true));
@@ -388,6 +422,8 @@ WebServer::Response WebServer::handle (const juce::String& method, const juce::S
             auto& d = devices[id];
             if (json.hasProperty ("order"))
                 d.order = BoardLayout::sanitise (json["order"]);
+            if (json.hasProperty ("breaks"))
+                d.breaks = BoardLayout::sanitise (json["breaks"]);
             if (json.hasProperty ("hidden"))
             {
                 d.hidden.clear();
@@ -462,7 +498,34 @@ WebServer::Response WebServer::stateJson (const juce::String& deviceId)
         o->setProperty ("cutout", p.cutout);
         o->setProperty ("speaking", p.speaking);
         o->setProperty ("visible", device.hidden.count (p.id) == 0);
+        o->setProperty ("rowBreak", device.breaks.contains (p.id));
         o->setProperty ("rf", rfJson (p));
+
+        // Mute (AF/RF) am Mikrofon-Sender
+        const bool live = p.rfAssigned && ! p.rfDisabled && p.rfOnline && p.rfKnown;
+        o->setProperty ("afMuted", live && p.rf.afMuted);
+        o->setProperty ("rfMuted", live && p.rf.rfMuted);
+
+        if (! p.level.empty())
+        {
+            juce::Array<juce::var> lv;
+            for (float v : p.level)
+                lv.add (juce::roundToInt (v * 100.0f));
+            o->setProperty ("level", lv);
+        }
+
+        if (p.iemAssigned)
+        {
+            auto* iem = new juce::DynamicObject();
+            const bool iemLive = ! p.iemDisabled && p.iemOnline && p.iemKnown;
+            iem->setProperty ("disabled", p.iemDisabled);
+            iem->setProperty ("online", iemLive);
+            iem->setProperty ("name", juce::String (p.iem.name));
+            iem->setProperty ("rfOn", iemLive && p.iem.rfOn);
+            if (iemLive && ! std::isnan (p.iem.inputLeftDb))  iem->setProperty ("l", juce::roundToInt (p.iem.inputLeftDb));
+            if (iemLive && ! std::isnan (p.iem.inputRightDb)) iem->setProperty ("r", juce::roundToInt (p.iem.inputRightDb));
+            o->setProperty ("iem", juce::var (iem));
+        }
         persons.add (juce::var (o));
     }
 
@@ -490,7 +553,18 @@ WebServer::Response WebServer::stateJson (const juce::String& deviceId)
 }
 
 //==============================================================================
-juce::String WebServer::createDevice()
+void WebServer::renameDevice (const juce::String& id, const juce::String& label)
+{
+    const juce::ScopedLock sl (devicesLock);
+    if (auto it = devices.find (id); it != devices.end() && label.trim().isNotEmpty())
+    {
+        it->second.label = label.trim().substring (0, 40);
+        it->second.labelLocked = true;
+        saveDevices();
+    }
+}
+
+juce::String WebServer::createDevice (const juce::String& nameHint, const juce::String& clientAddress)
 {
     static const char* alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";   // ohne 0/O, 1/I
     juce::Random rnd;
@@ -508,10 +582,31 @@ juce::String WebServer::createDevice()
 
     Device d;
     d.id = id;
-    d.label = juce::String::fromUTF8 ("Gerät ") + juce::String ((int) devices.size() + 1);
+    const auto hint = nameHint.removeCharacters ("<>{}\"\\").trim().substring (0, 40);
+    d.label = hint.isNotEmpty() ? hint : juce::String::fromUTF8 ("Gerät ") + juce::String ((int) devices.size() + 1);
     d.lastSeenMs = juce::Time::currentTimeMillis();
     devices[id] = d;
     saveDevices();
+
+    // Netzwerknamen im Hintergrund nachschlagen (kann dauern) – ersetzt den Namen, solange der Host ihn nicht geändert hat
+    if (clientAddress.isNotEmpty() && clientAddress != "127.0.0.1")
+    {
+        lookupPool.addJob ([this, id, ip = clientAddress, hint]
+        {
+            const auto host = reverseLookup (ip);
+            if (host.isEmpty())
+                return;
+
+            const juce::ScopedLock lk (devicesLock);
+            if (auto it = devices.find (id); it != devices.end() && ! it->second.labelLocked)
+            {
+                // Netzwerkname + Gerätetyp: "Tjarks-iPad (iPad · Safari)"
+                it->second.label = hint.isNotEmpty() && ! hint.containsIgnoreCase (host) ? host + " (" + hint + ")" : host;
+                it->second.label = it->second.label.substring (0, 48);
+                saveDevices();
+            }
+        });
+    }
     return id;
 }
 
@@ -552,6 +647,8 @@ void WebServer::loadDevices()
                 for (auto& x : *h)
                     d.hidden.insert (x.toString());
             d.order = BoardLayout::sanitise (v["order"]);
+            d.breaks = BoardLayout::sanitise (v["breaks"]);
+            d.labelLocked = (bool) v["labelLocked"];
             devices[d.id] = d;
         }
     }
@@ -578,6 +675,11 @@ void WebServer::saveDevices() const
         for (auto& x : d.order)
             ord.add (x);
         o->setProperty ("order", ord);
+        juce::Array<juce::var> br;
+        for (auto& x : d.breaks)
+            br.add (x);
+        o->setProperty ("breaks", br);
+        o->setProperty ("labelLocked", d.labelLocked);
         arr.add (juce::var (o));
     }
 

@@ -55,6 +55,7 @@ public:
     WirelessDeviceConfig config;
     std::function<void (const WirelessDeviceConfig&)> onChange;
     std::function<void()> onRemove;
+    std::function<juce::String()> getLog;   // Rohdaten zur Diagnose
 
     void setStatus (const WirelessManager::DeviceStatus&);
     void paint (juce::Graphics&) override;
@@ -63,10 +64,15 @@ public:
 private:
     void commit();
 
+    void saveLog();
+
     juce::ComboBox typeBox;
     juce::TextEditor hostEditor, labelEditor;
-    juce::TextButton removeButton { "Entfernen" };
+    juce::TextButton removeButton { "Entfernen" }, logButton;
+    juce::ToggleButton enabledToggle;
+    juce::OwnedArray<juce::TextButton> channelButtons;   // Kanäle einzeln an/aus
     juce::Label statusLabel;
+    std::unique_ptr<juce::FileChooser> chooser;
     bool online = false;
 };
 
@@ -79,16 +85,38 @@ public:
     {
         removeButton.onClick = [this] { if (onRemove) onRemove(); };
         addAndMakeVisible (removeButton);
+
+        // Name des Geräts: kommt automatisch (Netzwerkname/Gerätetyp), hier umbenennbar
+        nameEditor.setText (d.label, false);
+        nameEditor.setFont (Theme::font (14.0f, true));
+        nameEditor.setIndents (6, 5);
+        nameEditor.setTooltip (Theme::txt ("Name des Geräts – hier ändern, er wird für dieses Gerät gespeichert"));
+        auto commit = [this]
+        {
+            const auto t = nameEditor.getText().trim();
+            if (t.isNotEmpty() && t != device.label && onRename)
+                onRename (t);
+        };
+        nameEditor.onReturnKey = [this] { nameEditor.unfocusAllComponents(); };
+        nameEditor.onFocusLost = commit;
+        addAndMakeVisible (nameEditor);
     }
 
     WebServer::Device device;
     std::function<void()> onRemove;
+    std::function<void (const juce::String&)> onRename;
 
     void paint (juce::Graphics&) override;
-    void resized() override   { removeButton.setBounds (getLocalBounds().reduced (8, 6).removeFromRight (100)); }
+    void resized() override
+    {
+        auto b = getLocalBounds().reduced (8, 6);
+        removeButton.setBounds (b.removeFromRight (100));
+        nameEditor.setBounds (b.withTrimmedLeft (22).removeFromTop (b.getHeight() / 2 + 2).withWidth (juce::jmin (260, b.getWidth() - 140)));
+    }
 
 private:
     juce::TextButton removeButton { "Entfernen" };
+    juce::TextEditor nameEditor;
 };
 
 //==============================================================================

@@ -32,9 +32,13 @@ public:
         juce::String avatarKey;                // ändert sich, wenn sich das Bild ändert (leer = keins)
         bool talkback = true, speaking = false;
         bool cutout = false;                   // Bild ist freigestellt (transparenter Hintergrund)
-        bool rfAssigned = false, rfOnline = false, rfKnown = false;
+        bool rfAssigned = false, rfOnline = false, rfKnown = false, rfDisabled = false;
         WirelessChannelState rf;
         std::vector<float> history;            // HF-Verlauf 0..1
+        std::vector<float> level;              // Pegelverlauf vom Funkempfänger 0..1 (leer = keiner)
+
+        bool iemAssigned = false, iemOnline = false, iemKnown = false, iemDisabled = false;
+        WirelessChannelState iem;              // In-Ear-Sender (AD PSM)
     };
 
     struct Entry
@@ -72,11 +76,17 @@ public:
         juce::String keywords;     // eigener Alarm-Name (kommagetrennt)
         std::set<juce::String> hidden;
         juce::StringArray order;   // eigene Reihenfolge der Kacheln
+        juce::StringArray breaks;  // Personen, mit denen eine neue Zeile beginnt
+        bool labelLocked = false;  // Name am Host vergeben: nicht mehr automatisch ersetzen
         juce::int64 lastSeenMs = 0;
     };
 
     std::vector<Device> getDevices() const;
     void removeDevice (const juce::String& id);   // nur am Host
+    void renameDevice (const juce::String& id, const juce::String& label);   // nur am Host
+
+    /** "Tjarks-iPad.fritz.box" -> "Tjarks-iPad"; leer, wenn kein Name auflösbar. */
+    static juce::String reverseLookup (const juce::String& ip);
 
     // --- Für Tests ------------------------------------------------------------
     struct Response
@@ -87,7 +97,8 @@ public:
         bool cacheable = false;
     };
 
-    Response handle (const juce::String& method, const juce::String& target, const juce::String& body);
+    Response handle (const juce::String& method, const juce::String& target, const juce::String& body,
+                     const juce::String& clientAddress = {});
     void setDevicesFile (const juce::File& f);
 
 private:
@@ -100,10 +111,11 @@ private:
 
     void loadDevices();
     void saveDevices() const;          // devicesLock gehalten
-    juce::String createDevice();
+    juce::String createDevice (const juce::String& nameHint, const juce::String& clientAddress);
 
     std::unique_ptr<juce::StreamingSocket> listener;
     std::unique_ptr<juce::ThreadPool> pool;
+    juce::ThreadPool lookupPool { juce::ThreadPoolOptions{}.withThreadName ("ShowCom Name Lookup").withNumberOfThreads (1) };
     std::atomic<bool> running { false };
     std::atomic<int> currentPort { 0 };
     juce::String status;

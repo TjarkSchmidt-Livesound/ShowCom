@@ -63,6 +63,30 @@ void WirelessClient::updateChannel (int ch, const WirelessChannelState& s)
     channels[ch] = s;
 }
 
+juce::String WirelessClient::getRawLog() const
+{
+    const juce::ScopedLock sl (lock);
+    juce::String out;
+    out << "Modell: " << model << "\nStatus: " << statusText << "\n";
+    if (! unknownKeys.empty())
+    {
+        out << "Unbekannte Schlüssel:";
+        for (auto& k : unknownKeys)
+            out << " " << juce::String (k);
+        out << "\n";
+    }
+    out << "\nLetzte Meldungen:\n" << rawLog.joinIntoString ("\n") << "\n";
+    return out;
+}
+
+void WirelessClient::logRaw (const juce::String& text)
+{
+    const juce::ScopedLock sl (lock);
+    rawLog.add (juce::Time::getCurrentTime().formatted ("%H:%M:%S  ") + text.trim());
+    while (rawLog.size() > 400)
+        rawLog.remove (0);
+}
+
 void WirelessClient::markAlive()
 {
     const juce::ScopedLock sl (lock);
@@ -105,6 +129,7 @@ void ShureClient::run()
         }
 
         ShureParser parser;
+        parser.setTransmitterMode (config.isPsm());
         auto send = [this] (const std::string& cmd) { return socket->write (cmd.data(), (int) cmd.size()) == (int) cmd.size(); };
 
         for (auto& cmd : ShureParser::initialCommands())
@@ -132,10 +157,32 @@ void ShureClient::run()
                 lastData = nowMs();
                 markAlive();
 
-                for (int ch : parser.feed (std::string (buf, (size_t) n)))
+                const std::string chunk (buf, (size_t) n);
+                {
+                    // Meter (SAMPLE) nicht ins Protokoll – sonst sieht man vor lauter Pegeln nichts
+                    std::string text;
+                    size_t pos = 0;
+                    while (pos < chunk.size())
+                    {
+                        const auto start = chunk.find ("< SAMPLE", pos);
+                        if (start == std::string::npos) { text += chunk.substr (pos); break; }
+                        text += chunk.substr (pos, start - pos);
+                        const auto end = chunk.find ('>', start);
+                        if (end == std::string::npos) break;
+                        pos = end + 1;
+                    }
+                    if (juce::String (text).trim().isNotEmpty())
+                        logRaw (juce::String::fromUTF8 (text.data(), (int) text.size()));
+                }
+
+                for (int ch : parser.feed (chunk))
                     updateChannel (ch, parser.getChannels().at (ch));
 
                 setModel (juce::String (parser.getModel()));
+                {
+                    const juce::ScopedLock sl (lock);
+                    unknownKeys = parser.getUnknownKeys();
+                }
             }
 
             // Akku- und Namenswerte regelmäßig neu holen (Meter kommen jede Sekunde von selbst)
@@ -250,7 +297,7 @@ void SennheiserClient::applyJson (const juce::var& json, std::map<int, WirelessC
                     s.batteryType = bat["type"].toString().toStdString();
             }
             if (tx.hasProperty ("type"))  s.txModel = tx["type"].toString().toStdString();
-            if (tx.hasProperty ("mute"))  s.muted = (bool) tx["mute"];
+            if (tx.hasProperty ("mute"))  { s.afMuted = (bool) tx["mute"]; s.updateMuteSummary(); }
             changed.insert (i);
         }
     }
@@ -352,6 +399,12 @@ void SimulatedClient::run()
             s.txOn = i != 4;   // ein Sender ist aus
             s.antenna = rnd.nextBool() ? "AB" : (rnd.nextBool() ? "A" : "B");
 
+            if (i == 6)
+            {
+                s.afMuted = true;   // Demo: Sender stumm geschaltet
+                s.updateMuteSummary();
+            }
+
             if (s.txOn)
             {
                 rf[i] = juce::jlimit (-90.0f, -35.0f, rf[i] + (rnd.nextFloat() - 0.5f) * 6.0f
@@ -366,6 +419,53 @@ void SimulatedClient::run()
                 s.audioDb = -60.0f + rnd.nextFloat() * 40.0f;
             }
 
+            updateChannel (i + 1, s);
+        }
+
+        markAlive();
+        wait (250);
+    }
+}
+
+//==============================================================================
+SimulatedPsmClient::SimulatedPsmClient (const WirelessDeviceConfig& c)
+    : WirelessClient (c, "Simulated PSM")
+{
+    startThread();
+}
+
+SimulatedPsmClient::~SimulatedPsmClient()
+{
+    stopThread (2000);
+}
+
+void SimulatedPsmClient::run()
+{
+    juce::Random rnd (7);
+    const char* names[] = { "IEM Vox", "IEM Git", "IEM Keys", "IEM Drums" };
+    const int freqs[]   = { 518200, 519400, 520600, 521800 };
+    float level[4]      = { -20.0f, -24.0f, -30.0f, -18.0f };
+
+    setModel ("ADTQ (Demo)");
+    setOnline (true, "Simuliert");
+
+    while (! threadShouldExit())
+    {
+        for (int i = 0; i < 4; ++i)
+        {
+            WirelessChannelState s;
+            s.name = names[i];
+            s.txModel = "ADTQ";
+            s.frequencyKHz = freqs[i];
+            s.isIemTransmitter = true;
+            s.rfOn = i != 1;                // Demo: ein Sender mit RF aus
+            s.txOn = s.rfOn;
+            s.rfMuted = ! s.rfOn;
+            s.updateMuteSummary();
+
+            level[i] = juce::jlimit (-60.0f, -3.0f, level[i] + (rnd.nextFloat() - 0.5f) * 10.0f + (-20.0f - level[i]) * 0.1f);
+            s.inputLeftDb = level[i];
+            s.inputRightDb = level[i] - 2.0f + rnd.nextFloat() * 4.0f;
             updateChannel (i + 1, s);
         }
 
@@ -393,8 +493,10 @@ juce::String WirelessManager::typeName (WirelessDeviceConfig::Type t)
     switch (t)
     {
         case WirelessDeviceConfig::Type::shure:          return "Shure";
+        case WirelessDeviceConfig::Type::shurePsm:       return "Shure AD PSM";
         case WirelessDeviceConfig::Type::sennheiserEwdx: return "Sennheiser EW-DX";
         case WirelessDeviceConfig::Type::simulated:      return "Demo";
+        case WirelessDeviceConfig::Type::simulatedPsm:   return "Demo PSM";
     }
     return {};
 }
@@ -404,16 +506,20 @@ int WirelessManager::defaultChannelCount (const WirelessDeviceConfig& c)
     if (c.numChannels > 0)
         return c.numChannels;
 
-    return c.type == WirelessDeviceConfig::Type::simulated ? 8 : 4;
+    if (c.type == WirelessDeviceConfig::Type::simulated)
+        return 8;
+    return 4;
 }
 
 std::unique_ptr<WirelessClient> WirelessManager::createClient (const WirelessDeviceConfig& c)
 {
     switch (c.type)
     {
-        case WirelessDeviceConfig::Type::shure:          return std::make_unique<ShureClient> (c);
+        case WirelessDeviceConfig::Type::shure:
+        case WirelessDeviceConfig::Type::shurePsm:       return std::make_unique<ShureClient> (c);
         case WirelessDeviceConfig::Type::sennheiserEwdx: return std::make_unique<SennheiserClient> (c);
         case WirelessDeviceConfig::Type::simulated:      return std::make_unique<SimulatedClient> (c);
+        case WirelessDeviceConfig::Type::simulatedPsm:   return std::make_unique<SimulatedPsmClient> (c);
     }
     return {};
 }
@@ -429,12 +535,22 @@ void WirelessManager::setDevices (const std::vector<WirelessDeviceConfig>& devic
         demo.type = WirelessDeviceConfig::Type::simulated;
         demo.label = "Demo";
         wanted.push_back (demo);
+
+        WirelessDeviceConfig psm;
+        psm.id = demoPsmDeviceId;
+        psm.type = WirelessDeviceConfig::Type::simulatedPsm;
+        psm.label = "Demo";
+        wanted.push_back (psm);
     }
 
+    configs = wanted;
     std::vector<std::unique_ptr<WirelessClient>> next;
 
     for (auto& d : wanted)
     {
+        if (! d.enabled)
+            continue;   // abgeschaltet: keine Verbindung
+
         std::unique_ptr<WirelessClient> keep;
 
         for (auto& c : clients)
@@ -480,10 +596,22 @@ void WirelessManager::timerCallback()
 
         for (auto& [ch, s] : snap)
         {
-            auto& h = histories[c->config.id + ":" + juce::String (ch)];
+            const auto key = c->config.id + ":" + juce::String (ch);
+            auto& h = histories[key];
             h.push_back (c->isOnline() && s.txOn ? s.signalNormalised() : 0.0f);
             while ((int) h.size() > historyLength)
                 h.pop_front();
+
+            // Audiopegel vom Gerät: Empfänger-Ausgang bzw. Eingang des In-Ear-Senders (lauterer Kanal)
+            float db = s.isIemTransmitter ? std::fmax (std::isnan (s.inputLeftDb) ? -120.0f : s.inputLeftDb,
+                                                       std::isnan (s.inputRightDb) ? -120.0f : s.inputRightDb)
+                                          : (std::isnan (s.audioDb) ? -120.0f : s.audioDb);
+            if (! c->isOnline() || (! s.txOn && ! s.isIemTransmitter) || s.afMuted)
+                db = -120.0f;
+            auto& a = audioHistories[key];
+            a.push_back (juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 60.0f));
+            while ((int) a.size() > historyLength)
+                a.pop_front();
         }
 
         cache[c->config.id] = std::move (snap);
@@ -497,36 +625,61 @@ std::vector<WirelessManager::ChannelRef> WirelessManager::listChannels() const
 {
     std::vector<ChannelRef> refs;
 
-    for (auto& c : clients)
+    for (auto& cfg : configs)
     {
-        const auto name = typeName (c->config.type) + " "
-                        + (c->config.label.isNotEmpty() ? c->config.label : c->config.host);
+        const auto name = typeName (cfg.type) + " " + (cfg.label.isNotEmpty() ? cfg.label : cfg.host);
 
         std::set<int> chans;
-        if (auto it = cache.find (c->config.id); it != cache.end())
+        if (auto it = cache.find (cfg.id); it != cache.end())
             for (auto& [ch, s] : it->second)
                 chans.insert (ch);
 
         if (chans.empty())
-            for (int i = 1; i <= defaultChannelCount (c->config); ++i)
+            for (int i = 1; i <= defaultChannelCount (cfg); ++i)
                 chans.insert (i);
 
         for (int ch : chans)
         {
             ChannelRef r;
-            r.deviceId = c->config.id;
+            r.deviceId = cfg.id;
             r.channel = ch;
             r.label = name + juce::String::fromUTF8 (" · Kanal ") + juce::String (ch);
 
             WirelessChannelState s;
-            if (getChannel (c->config.id, ch, s) && ! s.name.empty())
+            const bool known = getChannel (cfg.id, ch, s);
+            r.iem = cfg.isPsm() || (known && s.isIemTransmitter);
+            if (known && ! s.name.empty())
                 r.label << "  (" << juce::String (s.name) << ")";
+            if (isDisabled (cfg.id, ch))
+                r.label << juce::String::fromUTF8 ("  – deaktiviert");
 
             refs.push_back (r);
         }
     }
 
     return refs;
+}
+
+bool WirelessManager::isDisabled (const juce::String& deviceId, int channel) const
+{
+    for (auto& cfg : configs)
+        if (cfg.id == deviceId)
+            return ! cfg.enabled || cfg.disabledChannels.count (channel) > 0;
+    return false;
+}
+
+const std::deque<float>* WirelessManager::getAudioHistory (const juce::String& deviceId, int channel) const
+{
+    auto it = audioHistories.find (deviceId + ":" + juce::String (channel));
+    return it != audioHistories.end() ? &it->second : nullptr;
+}
+
+juce::String WirelessManager::getRawLog (const juce::String& deviceId) const
+{
+    for (auto& c : clients)
+        if (c->config.id == deviceId)
+            return c->getRawLog();
+    return {};
 }
 
 bool WirelessManager::getChannel (const juce::String& deviceId, int channel, WirelessChannelState& out) const
@@ -552,6 +705,16 @@ const std::deque<float>* WirelessManager::getHistory (const juce::String& device
 WirelessManager::DeviceStatus WirelessManager::getStatus (const juce::String& deviceId) const
 {
     DeviceStatus st;
+
+    for (auto& cfg : configs)
+    {
+        if (cfg.id == deviceId && ! cfg.enabled)
+        {
+            st.exists = true;
+            st.text = "deaktiviert";
+            return st;
+        }
+    }
 
     for (auto& c : clients)
     {

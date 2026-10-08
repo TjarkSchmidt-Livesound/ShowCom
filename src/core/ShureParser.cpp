@@ -70,14 +70,17 @@ namespace
 
 std::vector<std::string> ShureParser::initialCommands()
 {
-    return { "< GET MODEL >", "< GET 0 ALL >", "< SET 0 METER_RATE 01000 >" };
+    // Meter alle 250 ms: flüssiger Pegel- und HF-Verlauf (kleinster Wert der Geräte: 100 ms)
+    return { "< GET MODEL >", "< GET 0 ALL >", "< SET 0 METER_RATE 00250 >" };
 }
 
 void ShureParser::detectFamily (const std::string& text)
 {
     const auto u = upper (text);
 
-    if (u.find ("SLXD") != std::string::npos)
+    if (u.find ("ADTD") != std::string::npos || u.find ("ADTQ") != std::string::npos || u.find ("PSM") != std::string::npos)
+        family = Family::adPsm;
+    else if (u.find ("SLXD") != std::string::npos)
         family = Family::slxd;
     else if (u.find ("AD4") != std::string::npos || u.find ("ADX") != std::string::npos
              || u.rfind ("AD1", 0) == 0 || u.rfind ("AD2", 0) == 0)
@@ -147,6 +150,85 @@ void ShureParser::handleMessage (const std::vector<std::string>& t, std::set<int
         return;
     }
 
+    auto upd = [&] { s.afMuted = txAfMute[ch] || rxAfMute[ch]; s.updateMuteSummary(); };
+
+    // --- Mute: AF (Audio) und RF (Träger) getrennt -------------------------------
+    if (key == "TX_MUTE_STATUS" || key == "TX_MUTE" || key == "TX_MUTE_MODE_STATUS" || key == "TX_MUTE_BUTTON_STATUS")
+    {
+        const auto u = upper (first);
+        // Axient Digital: TX_MUTE_MODE_STATUS ON = Sender sendet Audio, MUTE = stumm.
+        // QLX-D/SLX-D: TX_MUTE_STATUS ON = stumm.
+        txAfMute[ch] = key == "TX_MUTE_MODE_STATUS" ? (u == "MUTE" || u == "MUTED")
+                                                     : (u == "ON" || u == "MUTE" || u == "MUTED" || u == "PRESSED");
+        upd();
+        changed.insert (ch);
+        return;
+    }
+    if (key == "AUDIO_MUTE")
+    {
+        rxAfMute[ch] = upper (first) == "ON";
+        upd();
+        changed.insert (ch);
+        return;
+    }
+    if (key == "SLOT_RF_OUTPUT" && v.size() >= 2)
+    {
+        // "< REP 1 SLOT_RF_OUTPUT 1 RF_MUTE >": ShowLink-Slot des Senders
+        slotRfMute[ch][toInt (v[0])] = upper (v[1]) == "RF_MUTE";
+        bool any = false;
+        for (auto& [slot, m] : slotRfMute[ch])
+            any = any || (m && (slotOccupied[ch].count (slot) == 0 || slotOccupied[ch][slot]));
+        s.rfMuted = any;
+        s.updateMuteSummary();
+        changed.insert (ch);
+        return;
+    }
+    if (key == "SLOT_TX_MODEL" && v.size() >= 2)
+    {
+        slotOccupied[ch][toInt (v[0])] = ! isUnknown (v[1]);
+        return;
+    }
+
+    // --- In-Ear-Sender (Axient Digital PSM) -------------------------------------
+    // Shure hat für ADTD/ADTQ noch keine Befehlsliste veröffentlicht. Erkannt werden die
+    // Schlüssel nach dem Muster der Axient-Digital-Familie; Unbekanntes landet in getUnknownKeys().
+    if (family == Family::adPsm || transmitterMode)
+    {
+        s.isIemTransmitter = true;
+        const auto u = upper (first);
+        const bool rfKey = key.find ("RF") != std::string::npos
+                           && (key.find ("OUTPUT") != std::string::npos || key.find ("MUTE") != std::string::npos
+                               || key.find ("ENABLE") != std::string::npos || key.find ("TX_STATE") != std::string::npos);
+        const auto& val = (key == "SLOT_RF_OUTPUT" || v.size() >= 2) && ! isNumber (v.back()) ? upper (v.back()) : u;
+
+        if (rfKey && ! val.empty() && ! isNumber (val))
+        {
+            const bool muteKey = key.find ("MUTE") != std::string::npos;
+            const bool on = muteKey ? ! (val == "ON" || val == "MUTE" || val == "RF_MUTE")
+                                    : (val == "ON" || val == "RF_ON" || val == "ENABLED" || val == "ENABLE");
+            s.rfOn = on;
+            s.txOn = on;
+            s.rfMuted = ! on;
+            s.updateMuteSummary();
+            changed.insert (ch);
+            return;
+        }
+
+        if ((key.find ("AUDIO") != std::string::npos || key.find ("INPUT") != std::string::npos)
+            && (key.find ("LEVEL") != std::string::npos || key.find ("LVL") != std::string::npos || key.find ("METER") != std::string::npos))
+        {
+            // Pegel wie bei Axient Digital: gemeldet − 120 = dBFS; optional zwei Werte (L/R)
+            const int a = toInt (first);
+            const int b = v.size() >= 2 ? toInt (v[1]) : -1;
+            const bool right = key.find ("_R") != std::string::npos || key.find ("RIGHT") != std::string::npos;
+            if (a >= 0) (right ? s.inputRightDb : s.inputLeftDb) = (float) (a - 120);
+            if (b >= 0) s.inputRightDb = (float) (b - 120);
+            if (! right && b < 0 && std::isnan (s.inputRightDb)) s.inputRightDb = s.inputLeftDb;
+            changed.insert (ch);
+            return;
+        }
+    }
+
     if (key == "BATT_BARS" || key == "TX_BATT_BARS")
     {
         const int n = toInt (first);
@@ -187,10 +269,6 @@ void ShureParser::handleMessage (const std::vector<std::string>& t, std::set<int
             s.rfDbm = NAN;
         }
     }
-    else if (key == "TX_MUTE_STATUS" || key == "TX_MUTE")
-    {
-        s.muted = upper (first) == "ON";
-    }
     else if (key == "RX_RF_LVL")
     {
         const int n = toInt (first);
@@ -216,8 +294,15 @@ void ShureParser::handleMessage (const std::vector<std::string>& t, std::set<int
         const int n = toInt (first);
         if (n >= 0) s.audioDb = (float) (n - 50);
     }
+    else if (key == "AUDIO_LEVEL_PEAK" || key == "AUDIO_LEVEL_RMS")
+    {
+        const int n = toInt (first);
+        if (n >= 0) s.audioDb = (float) (n - 120);
+    }
     else
     {
+        if (unknownKeys.size() < 200)
+            unknownKeys.insert (key);
         return;
     }
 
@@ -226,6 +311,22 @@ void ShureParser::handleMessage (const std::vector<std::string>& t, std::set<int
 
 void ShureParser::handleSample (int, const std::vector<std::string>& v, WirelessChannelState& s)
 {
+    if (family == Family::adPsm || transmitterMode)
+    {
+        // In-Ear-Sender: Eingangsmeter. Aufbau nicht veröffentlicht – die ersten beiden
+        // Zahlenwerte werden als Pegel links/rechts (−120 wie bei Axient Digital) gelesen.
+        std::vector<int> nums;
+        for (auto& x : v)
+            if (isNumber (x)) nums.push_back (toInt (x));
+        if (! nums.empty())
+        {
+            s.isIemTransmitter = true;
+            s.inputLeftDb = (float) (nums[0] - 120);
+            s.inputRightDb = (float) ((nums.size() > 1 ? nums[1] : nums[0]) - 120);
+        }
+        return;
+    }
+
     if (v.size() >= 9)
     {
         // Axient Digital: qual audBitmap audPeak audRms rfAntStats rfBitmapA rfRssiA rfBitmapB rfRssiB

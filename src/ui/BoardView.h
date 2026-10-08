@@ -45,8 +45,8 @@ private:
     };
 
     // Werkzeuge auf einer Kachel im Anpassen-Modus
-    enum class Tool { none, left, eye, right };
-    struct ToolRects { juce::Rectangle<float> left, eye, right; };
+    enum class Tool { none, left, eye, right, rowBreak };
+    struct ToolRects { juce::Rectangle<float> left, eye, right, rowBreak; };
     static ToolRects toolRectsFor (juce::Rectangle<float> card);
     Tool toolAt (int cardIndex, juce::Point<float>) const;
     int cardAt (juce::Point<float>) const;
@@ -54,6 +54,7 @@ private:
     void setEditing (bool);
     void moveCard (int from, int to);
     void toggleHidden (const juce::String& userId);
+    void toggleRowBreak (const juce::String& userId);
     void commitLayout();
     void paintEditOverlay (juce::Graphics&, juce::Rectangle<float>, const UserProfile&, int index, int count);
 
@@ -66,6 +67,7 @@ private:
 
     void layoutCards();
     void paintCard (juce::Graphics&, juce::Rectangle<float>, const UserProfile&, int index);
+    void paintIem (juce::Graphics&, juce::Rectangle<float>, const AppController::RfInfo&);
     void paintCardStatic (juce::Graphics&, juce::Rectangle<float> r, const UserProfile&, juce::Rectangle<float> header,
                           juce::Rectangle<float> photo, juce::Rectangle<float> graph, bool talkbackCard, float pixelScale);
     static void drawBattery (juce::Graphics&, juce::Rectangle<float>, int percent, bool known);
@@ -82,7 +84,7 @@ private:
     juce::StringArray cardIds;          // Personen in Anzeigereihenfolge (im Anpassen-Modus inkl. ausgeblendeter)
 
     bool editing = false;
-    struct Drag { int index = -1; bool active = false; float grabX = 0, mouseX = 0; int drop = -1; } drag;
+    struct Drag { int index = -1; bool active = false; float grabX = 0, grabY = 0, mouseX = 0, mouseY = 0; int drop = -1; } drag;
     Tool hoverTool = Tool::none;
     int hoverCard = -1;
 

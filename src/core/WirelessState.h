@@ -24,7 +24,17 @@ struct WirelessChannelState
     float audioDb = NAN;         // Audiopegel am Empfänger (dBFS)
 
     bool txOn = false;           // Sender eingeschaltet / verbunden
-    bool muted = false;
+    bool muted = false;          // AF- oder RF-Mute (Zusammenfassung)
+    bool afMuted = false;        // Audio stumm (Mute-Taste/Mute-Modus am Sender oder Audio-Mute am Empfänger)
+    bool rfMuted = false;        // HF-Träger stumm (RF Mute)
+
+    // In-Ear-Sender (Shure Axient Digital PSM): Kanal ist ein Sender, kein Empfänger
+    bool isIemTransmitter = false;
+    bool rfOn = false;           // HF-Ausgang an
+    float inputLeftDb = NAN;     // Eingangspegel links/rechts (dBFS)
+    float inputRightDb = NAN;
+
+    void updateMuteSummary()     { muted = afMuted || rfMuted; }
 
     /** Batterie in Prozent, notfalls aus den Balken geschätzt. */
     int batteryPercentEstimate() const

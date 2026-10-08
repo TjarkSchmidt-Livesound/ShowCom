@@ -43,11 +43,15 @@ public:
     struct RfInfo
     {
         bool assigned = false, online = false, known = false;
+        bool disabled = false;                           // Gerät/Kanal in den Einstellungen abgeschaltet
         WirelessChannelState state;
-        const std::deque<float>* history = nullptr;
+        const std::deque<float>* history = nullptr;       // HF 0..1
+        const std::deque<float>* audioHistory = nullptr;  // Audiopegel vom Gerät 0..1
         juce::String deviceName;
     };
     RfInfo getRfInfo (const UserProfile&) const;
+    RfInfo getIemInfo (const UserProfile&) const;     // In-Ear-Sender (AD PSM)
+    RfInfo fillRfInfo (const juce::String& deviceId, int channel) const;
 
     std::function<void()> onListeningChanged;
     std::function<void()> onAudioDeviceChanged;

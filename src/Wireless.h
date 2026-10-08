@@ -14,7 +14,8 @@
 /**
     Netzwerk-Anbindung von Funkempfängern.
 
-    - Shure ULX-D, QLX-D, SLX-D, Axient Digital: TCP-Port 2202, ASCII-Befehle (ShureParser)
+    - Shure Axient Digital (AD/ADX), QLX-D, SLX-D, SLX-D+: TCP-Port 2202, ASCII-Befehle (ShureParser)
+    - Shure Axient Digital PSM (ADTD/ADTQ): In-Ear-Sender, gleiche Verbindung, Sender-Modus
     - Sennheiser EW-DX (EM 2 / EM 4): Sound Control Protocol v1, JSON über UDP-Port 45
     - Simuliert: für den Demo-Modus ohne Hardware
 
@@ -33,7 +34,13 @@ public:
     juce::String getModel() const;
     std::map<int, WirelessChannelState> snapshot() const;
 
+    /** Die letzten empfangenen Rohdaten und unbekannten Schlüssel (Diagnose). */
+    juce::String getRawLog() const;
+
 protected:
+    void logRaw (const juce::String& text);
+    juce::StringArray rawLog;
+    std::set<std::string> unknownKeys;
     void setOnline (bool online, const juce::String& status);
     void setModel (const juce::String& m);
     void updateChannel (int ch, const WirelessChannelState& s);
@@ -86,12 +93,24 @@ private:
     void run() override;
 };
 
+/** Simulierter In-Ear-Sender (Demo). */
+class SimulatedPsmClient : public WirelessClient
+{
+public:
+    explicit SimulatedPsmClient (const WirelessDeviceConfig&);
+    ~SimulatedPsmClient() override;
+
+private:
+    void run() override;
+};
+
 //==============================================================================
 /** Verwaltet alle Empfänger und hält die Verläufe für die Grafiken. Nur Message-Thread. */
 class WirelessManager : private juce::Timer
 {
 public:
     static constexpr int historyLength = 240;   // 60 s bei 4 Hz
+    static constexpr const char* demoPsmDeviceId = "demo-psm";
 
     WirelessManager();
     ~WirelessManager() override;
@@ -104,10 +123,19 @@ public:
         juce::String deviceId;
         int channel = 0;
         juce::String label;
+        bool iem = false;     // In-Ear-Sender statt Empfänger
     };
 
     /** Alle bekannten Kanäle für Auswahllisten. */
     std::vector<ChannelRef> listChannels() const;
+
+    /** Abgeschaltetes Gerät oder abgeschalteter Kanal: nicht überwachen, nicht warnen. */
+    bool isDisabled (const juce::String& deviceId, int channel) const;
+
+    /** Audiopegel vom Funkempfänger (0..1, 4 Hz). */
+    const std::deque<float>* getAudioHistory (const juce::String& deviceId, int channel) const;
+
+    juce::String getRawLog (const juce::String& deviceId) const;
 
     bool getChannel (const juce::String& deviceId, int channel, WirelessChannelState& out) const;
     const std::deque<float>* getHistory (const juce::String& deviceId, int channel) const;
@@ -126,6 +154,7 @@ private:
 
     std::vector<std::unique_ptr<WirelessClient>> clients;
     std::map<juce::String, std::map<int, WirelessChannelState>> cache;
-    std::map<juce::String, std::deque<float>> histories;
+    std::map<juce::String, std::deque<float>> histories, audioHistories;
+    std::vector<WirelessDeviceConfig> configs;   // inkl. abgeschalteter Geräte
     bool demoEnabled = false;
 };

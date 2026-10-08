@@ -139,10 +139,13 @@ void ModelDownloader::finished (juce::URL::DownloadTask* t, bool success)
 //==============================================================================
 WirelessRow::WirelessRow (const WirelessDeviceConfig& c) : config (c)
 {
-    typeBox.addItem ("Shure", 1);
+    typeBox.addItem ("Shure (AD, ADX, SLX-D, SLX-D+, QLX-D)", 1);
+    typeBox.addItem (Theme::txt ("Shure Axient Digital PSM (In-Ear)"), 3);
     typeBox.addItem ("Sennheiser EW-DX", 2);
-    typeBox.setTooltip (Theme::txt ("Shure: ULX-D, QLX-D, SLX-D, Axient Digital  ·  Sennheiser: EW-DX EM 2 / EM 4"));
-    typeBox.setSelectedId (c.type == WirelessDeviceConfig::Type::sennheiserEwdx ? 2 : 1, juce::dontSendNotification);
+    typeBox.setTooltip (Theme::txt ("Shure-Empfänger: Axient Digital (AD4D/AD4Q, ADX), SLX-D/SLX-D+, QLX-D  ·  "
+                                    "Shure AD PSM: In-Ear-Sender ADTD/ADTQ  ·  Sennheiser: EW-DX EM 2 / EM 4"));
+    typeBox.setSelectedId (c.type == WirelessDeviceConfig::Type::sennheiserEwdx ? 2
+                           : c.type == WirelessDeviceConfig::Type::shurePsm ? 3 : 1, juce::dontSendNotification);
     typeBox.onChange = [this] { commit(); };
     addAndMakeVisible (typeBox);
 
@@ -164,6 +167,32 @@ WirelessRow::WirelessRow (const WirelessDeviceConfig& c) : config (c)
     removeButton.onClick = [this] { if (onRemove) onRemove(); };
     addAndMakeVisible (removeButton);
 
+    enabledToggle.setButtonText ("aktiv");
+    enabledToggle.setTooltip (Theme::txt ("Aus = dieses Gerät nicht verbinden und nicht überwachen (z. B. abgebaut oder Ersatz)"));
+    enabledToggle.setToggleState (c.enabled, juce::dontSendNotification);
+    enabledToggle.onClick = [this] { commit(); };
+    addAndMakeVisible (enabledToggle);
+
+    // Einzelne Kanäle (Empfänger bzw. In-Ear-Sender) an/aus
+    for (int ch = 1; ch <= WirelessManager::defaultChannelCount (c); ++ch)
+    {
+        auto* b = channelButtons.add (new juce::TextButton (juce::String (ch)));
+        b->setClickingTogglesState (true);
+        b->setToggleState (c.disabledChannels.count (ch) == 0, juce::dontSendNotification);
+        b->setTooltip (Theme::txt ("Kanal ") + juce::String (ch) + Theme::txt (" überwachen (aus = keine Anzeige, keine Warnungen)"));
+        b->setColour (juce::TextButton::buttonOnColourId, Theme::accent.withAlpha (0.35f));
+        b->setColour (juce::TextButton::textColourOnId, Theme::text);
+        b->setColour (juce::TextButton::textColourOffId, Theme::textFaint);
+        b->onClick = [this] { commit(); };
+        addAndMakeVisible (b);
+    }
+
+    logButton.setButtonText (Theme::txt ("Protokoll …"));
+    logButton.setTooltip (Theme::txt ("Speichert die zuletzt empfangenen Daten des Geräts als Textdatei – hilfreich, "
+                                      "wenn ein Gerät nicht richtig angezeigt wird (z. B. AD PSM)"));
+    logButton.onClick = [this] { saveLog(); };
+    addAndMakeVisible (logButton);
+
     statusLabel.setFont (Theme::font (12.0f));
     statusLabel.setColour (juce::Label::textColourId, Theme::textDim);
     addAndMakeVisible (statusLabel);
@@ -172,16 +201,41 @@ WirelessRow::WirelessRow (const WirelessDeviceConfig& c) : config (c)
 void WirelessRow::commit()
 {
     auto c = config;
-    c.type = typeBox.getSelectedId() == 2 ? WirelessDeviceConfig::Type::sennheiserEwdx : WirelessDeviceConfig::Type::shure;
+    c.type = typeBox.getSelectedId() == 2 ? WirelessDeviceConfig::Type::sennheiserEwdx
+           : typeBox.getSelectedId() == 3 ? WirelessDeviceConfig::Type::shurePsm
+                                          : WirelessDeviceConfig::Type::shure;
     c.host = hostEditor.getText().trim();
     c.label = labelEditor.getText().trim();
+    c.enabled = enabledToggle.getToggleState();
+    c.disabledChannels.clear();
+    for (int i = 0; i < channelButtons.size(); ++i)
+        if (! channelButtons[i]->getToggleState())
+            c.disabledChannels.insert (i + 1);
 
-    if (c.type != config.type || c.host != config.host || c.label != config.label)
+    if (c.type != config.type || c.host != config.host || c.label != config.label
+        || c.enabled != config.enabled || c.disabledChannels != config.disabledChannels)
     {
         config = c;
         if (onChange)
             onChange (c);
     }
+}
+
+void WirelessRow::saveLog()
+{
+    const auto text = getLog != nullptr ? getLog() : juce::String();
+    const auto name = "ShowCom-Funk-" + (config.host.isNotEmpty() ? config.host.replaceCharacter (':', '_') : juce::String ("Geraet"))
+                    + "-" + juce::Time::getCurrentTime().formatted ("%Y%m%d-%H%M%S") + ".txt";
+
+    chooser = std::make_unique<juce::FileChooser> (Theme::txt ("Protokoll speichern"),
+                                                   juce::File::getSpecialLocation (juce::File::userDesktopDirectory).getChildFile (name),
+                                                   "*.txt");
+    chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting,
+                          [text] (const juce::FileChooser& fc)
+                          {
+                              if (fc.getResult() != juce::File())
+                                  fc.getResult().replaceWithText (text.isNotEmpty() ? text : juce::String ("(noch keine Daten empfangen)"));
+                          });
 }
 
 void WirelessRow::setStatus (const WirelessManager::DeviceStatus& st)
@@ -194,7 +248,7 @@ void WirelessRow::setStatus (const WirelessManager::DeviceStatus& st)
     if (statusLabel.getText() != text)
         statusLabel.setText (text, juce::dontSendNotification);
 
-    statusLabel.setColour (juce::Label::textColourId, st.online ? Theme::ok : Theme::alert);
+    statusLabel.setColour (juce::Label::textColourId, ! config.enabled ? Theme::textFaint : st.online ? Theme::ok : Theme::alert);
     repaint();
 }
 
@@ -203,7 +257,7 @@ void WirelessRow::paint (juce::Graphics& g)
     g.setColour (Theme::background.withAlpha (0.5f));
     g.fillRoundedRectangle (getLocalBounds().toFloat(), 8.0f);
 
-    g.setColour (online ? Theme::ok : Theme::alert);
+    g.setColour (! config.enabled ? Theme::textFaint : online ? Theme::ok : Theme::alert);
     g.fillEllipse (juce::Rectangle<float> (10.0f, 10.0f).withCentre ({ 16.0f, 22.0f }));
 }
 
@@ -218,7 +272,19 @@ void WirelessRow::resized()
     hostEditor.setBounds (top.removeFromLeft (top.getWidth() / 2));
     top.removeFromLeft (8);
     labelEditor.setBounds (top);
-    statusLabel.setBounds (b.withTrimmedTop (2));
+
+    b.removeFromTop (6);
+    auto second = b.removeFromTop (28);
+    enabledToggle.setBounds (second.removeFromLeft (74));
+    second.removeFromLeft (6);
+    for (auto* btn : channelButtons)
+    {
+        btn->setBounds (second.removeFromLeft (32).reduced (0, 1));
+        second.removeFromLeft (4);
+    }
+    logButton.setBounds (second.removeFromRight (100));
+    second.removeFromLeft (8);
+    statusLabel.setBounds (second.withTrimmedRight (8));
 }
 
 //==============================================================================
@@ -232,9 +298,10 @@ void WebDeviceRow::paint (juce::Graphics& g)
     g.fillEllipse (juce::Rectangle<float> (10.0f, 10.0f).withCentre ({ 16.0f, (float) getHeight() / 2.0f }));
 
     auto b = getLocalBounds().reduced (30, 6).withTrimmedRight (110);
-    g.setColour (Theme::text);
-    g.setFont (Theme::font (14.0f, true));
-    g.drawText (device.label + "   (" + device.id + ")", b.removeFromTop (b.getHeight() / 2), juce::Justification::bottomLeft, true);
+    auto top = b.removeFromTop (b.getHeight() / 2);
+    g.setColour (Theme::textFaint);
+    g.setFont (Theme::font (12.0f, true));
+    g.drawText ("ID " + device.id, top.withTrimmedLeft (juce::jmin (260, getWidth() - 148) + 10), juce::Justification::centredLeft, true);
 
     juce::String info;
     info << Theme::txt ("Alarm-Name: ") << (device.keywords.isNotEmpty() ? device.keywords : Theme::txt ("– nicht gesetzt –"))
@@ -304,8 +371,9 @@ SettingsPanel::SettingsPanel (AppController& a)
     content.addAndMakeVisible (webInfo);
 
     // --- Funkempfänger ------------------------------------------------------
-    wirelessHint.setText (txt ("Empfänger im selben Netzwerk wie dieser Rechner. Shure: Steuerung über TCP-Port 2202 "
-                               "(Standard, nichts einzustellen). Sennheiser EW-DX: im Empfänger bzw. in Control Cockpit unter "
+    wirelessHint.setText (txt ("Empfänger im selben Netzwerk wie dieser Rechner. Shure (Axient Digital/ADX, SLX-D, SLX-D+, QLX-D, "
+                               "Axient Digital PSM): Steuerung über TCP-Port 2202 (Standard, nichts einzustellen). "
+                               "„aktiv“ und die Kanal-Knöpfe schalten die Überwachung einzelner Geräte und Kanäle ab. Sennheiser EW-DX: im Empfänger bzw. in Control Cockpit unter "
                                "„Access“ den Drittanbieter-Zugriff „Legacy (SSCv1)“ aktivieren (UDP-Port 45). "
                                "Die Zuordnung Person ↔ Funkkanal erfolgt unter „Personen“."),
                           juce::dontSendNotification);
@@ -579,6 +647,7 @@ void SettingsPanel::rebuildWebRows()
     {
         auto* row = webRows.add (new WebDeviceRow (d));
         const auto id = d.id;
+        row->onRename = [this, id] (const juce::String& name) { app.web.renameDevice (id, name); };
         row->onRemove = [this, id]
         {
             juce::Component::SafePointer<SettingsPanel> self (this);
@@ -605,6 +674,7 @@ void SettingsPanel::rebuildWirelessRows()
     {
         auto* row = wirelessRows.add (new WirelessRow (d));
         const auto id = d.id;
+        row->getLog = [this, id] { return app.wireless.getRawLog (id); };
 
         row->onChange = [this, id] (const WirelessDeviceConfig& c)
         {
@@ -744,9 +814,9 @@ void SettingsPanel::Content::resized()
     endSection();
 
     beginSection (txt ("Funkempfänger"));
-    o.wirelessHint.setBounds (row (60));
+    o.wirelessHint.setBounds (row (76));
     for (auto* r : o.wirelessRows)
-        r->setBounds (row (66));
+        r->setBounds (row (88));
     o.addWirelessButton.setBounds (row (32).withWidth (230));
     endSection();
 

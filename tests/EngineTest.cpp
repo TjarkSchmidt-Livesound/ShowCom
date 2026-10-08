@@ -159,7 +159,8 @@ namespace
                     send ("< REP MODEL {ULXD4D                          } >"
                           "< REP 1 CHAN_NAME {HH01    } >< REP 1 TX_TYPE ULXD2 >< REP 1 BATT_BARS 004 >"
                           "< REP 1 BATT_CHARGE 087 >< REP 1 BATT_RUN_TIME 00312 >< REP 1 FREQUENCY 470125 >"
-                          "< REP 2 CHAN_NAME {BP02    } >< REP 2 TX_TYPE UNKN >< REP 2 FREQUENCY 471300 >");
+                          "< REP 2 CHAN_NAME {BP02    } >< REP 2 TX_TYPE UNKN >< REP 2 FREQUENCY 471300 >"
+                          "< REP 1 TX_MUTE_STATUS ON >");
                     replied = true;
                 }
 
@@ -245,7 +246,24 @@ namespace
                              client.getModel().toRawUTF8());
                 check (s[1].name == "HH01" && s[1].batteryMinutes == 312 && std::abs (s[1].rfDbm + 50.0f) < 0.1f, "Shure: Werte korrekt umgerechnet");
                 check (s.count (2) && ! s[2].txOn, "Shure: ausgeschalteter Sender erkannt");
+                check (s[1].afMuted && ! s[1].rfMuted, "Shure: Mute am Sender als AF-Mute erkannt");
+                check (std::abs (s[1].audioDb - 10.0f) < 0.1f, "Shure: Audiopegel direkt vom Empfänger");
+                check (client.getRawLog().contains ("TX_MUTE_STATUS"), "Shure: Rohdaten für das Diagnose-Protokoll");
             }
+        }
+        {
+            // Geräte und einzelne Kanäle abschalten
+            WirelessManager mgr;
+            WirelessDeviceConfig off;  off.id = "off"; off.type = WirelessDeviceConfig::Type::shure; off.host = "127.0.0.1:22021"; off.enabled = false;
+            WirelessDeviceConfig part; part.id = "part"; part.type = WirelessDeviceConfig::Type::shure; part.host = "127.0.0.1:22022";
+            part.disabledChannels = { 2 };
+            mgr.setDevices ({ off, part });
+            check (mgr.getStatus ("off").text == "deaktiviert" && mgr.isDisabled ("off", 1), "Funk: abgeschaltetes Gerät wird nicht überwacht");
+            check (mgr.isDisabled ("part", 2) && ! mgr.isDisabled ("part", 1), "Funk: einzelner Kanal abschaltbar");
+            bool listed = false;
+            for (auto& r : mgr.listChannels())
+                listed = listed || (r.deviceId == "off" && r.label.contains ("deaktiviert"));
+            check (listed, "Funk: abgeschaltetes Gerät bleibt zuordenbar");
         }
         {
             FakeEwdx fake (24545);
@@ -322,9 +340,23 @@ namespace
         auto page = httpRequest (18765, "GET", "/", {}, st);
         check (st == 200 && page.contains ("api/register"), "Web: Startseite");
 
-        auto reg = juce::JSON::parse (httpRequest (18765, "POST", "/api/register", {}, st));
+        auto reg = juce::JSON::parse (httpRequest (18765, "POST", "/api/register", juce::String::fromUTF8 (R"({"name":"iPad · Safari"})"), st));
         const auto id = reg["id"].toString();
         check (st == 200 && id.length() == 6, "Web: Gerät registriert, eigene ID");
+        {
+            bool named = false;
+            for (auto& d : web.getDevices())
+                named = named || (d.id == id && d.label == juce::String::fromUTF8 ("iPad · Safari"));
+            check (named, "Web: Gerät meldet seinen Namen");
+        }
+        httpRequest (18765, "POST", "/api/d/" + id + "/settings", R"({"label":"Hack"})", st);
+        web.renameDevice (id, "Monitorplatz iPad");
+        {
+            bool renamed = false;
+            for (auto& d : web.getDevices())
+                renamed = renamed || (d.id == id && d.label == "Monitorplatz iPad" && d.labelLocked);
+            check (renamed, "Web: Name nur am Host änderbar");
+        }
 
         httpRequest (18765, "GET", "/d/" + id, {}, st);
         check (st == 200, "Web: Geräte-Oberfläche erreichbar");
@@ -341,11 +373,12 @@ namespace
         check (! (bool) state["persons"][1]["visible"] && (bool) state["persons"][0]["visible"], "Web: Person pro Gerät ausblenden");
 
         // Dashboard anpassen: eigene Reihenfolge + Ausblenden in einem Rutsch
-        httpRequest (18765, "POST", "/api/d/" + id + "/layout", R"({"order":["u2","u1","gibtsnicht"],"hidden":["u1"]})", st);
+        httpRequest (18765, "POST", "/api/d/" + id + "/layout", R"({"order":["u2","u1","gibtsnicht"],"hidden":["u1"],"breaks":["u1"]})", st);
         state = juce::JSON::parse (httpRequest (18765, "GET", "/api/d/" + id + "/state", {}, st));
         check (st == 200 && state["persons"][0]["id"].toString() == "u2" && state["persons"][1]["id"].toString() == "u1",
                "Web: eigene Reihenfolge der Kacheln");
         check ((bool) state["persons"][0]["visible"] && ! (bool) state["persons"][1]["visible"], "Web: Layout setzt Sichtbarkeit");
+        check ((bool) state["persons"][1]["rowBreak"] && ! (bool) state["persons"][0]["rowBreak"], "Web: zweite Zeile pro Gerät");
 
         // Personen lassen sich über das Web weder anlegen noch löschen
         httpRequest (18765, "POST", "/api/d/" + id + "/addPerson", R"({"name":"X"})", st);

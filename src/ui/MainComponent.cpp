@@ -184,6 +184,13 @@ MainComponent::MainComponent (AppController& a) : app (a)
 
     board.onOpenUser = [this] (const juce::String& id)
     {
+        // Keine Favoritin/kein Favorit: Tab vorübergehend dazunehmen
+        if (std::none_of (userTabs.begin(), userTabs.end(), [&] (const UserTab& t) { return t.userId == id; }))
+        {
+            extraTabUser = id;
+            syncUserTabs();
+        }
+
         for (auto& t : userTabs)
             if (t.userId == id)
                 tabs.setCurrentTabIndex (indexOfTab (t.view.get()));
@@ -234,10 +241,10 @@ int MainComponent::indexOfTab (juce::Component* c) const
 //==============================================================================
 void MainComponent::syncUserTabs()
 {
-    // Eigene Tabs nur für Personen, deren Talkback mitgeloggt wird
+    // Eigene Tabs für Favoriten, deren Talkback mitgeloggt wird (plus eine zuletzt vom Board geöffnete Person)
     std::vector<UserProfile> users;
     for (auto& u : app.state.getUsers())
-        if (u.talkbackLog)
+        if (u.talkbackLog && (u.favorite || u.id == extraTabUser))
             users.push_back (u);
 
     const int firstUserTab = 3;   // Board, Konversation, Erwähnungen
@@ -536,11 +543,11 @@ void MainComponent::paint (juce::Graphics& g)
         g.drawText ("TALKBACK LOG", logo.withTrimmedTop (headerArea.getHeight() / 2 + 2), juce::Justification::topLeft);
     }
 
-    // Wer spricht gerade? Kleine Avatare, die leuchten.
+    // Favoriten: kleine Avatare, die leuchten, wenn jemand spricht
     auto p = presenceArea;
     for (auto& u : app.state.getUsers())
     {
-        if (! u.talkbackLog)
+        if (! u.favorite)
             continue;
         if (p.getWidth() < 40)
             break;
@@ -568,8 +575,8 @@ void MainComponent::resized()
     h.removeFromLeft (20);
 
     const auto& allUsers = app.state.getUsers();
-    const int talkbackUsers = (int) std::count_if (allUsers.begin(), allUsers.end(), [] (const UserProfile& u) { return u.talkbackLog; });
-    const int presenceWidth = juce::jmin (h.getWidth() / 2, talkbackUsers * 44);
+    const int favourites = (int) std::count_if (allUsers.begin(), allUsers.end(), [] (const UserProfile& u) { return u.favorite; });
+    const int presenceWidth = juce::jmin (h.getWidth() / 2, favourites * 44);
     presenceArea = h.removeFromLeft (presenceWidth);
     h.removeFromLeft (12);
     statusLabel.setBounds (h);

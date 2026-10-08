@@ -70,7 +70,7 @@ BoardView::BoardView (AppController& a) : app (a)
     setOpaque (true);
     content.setOpaque (true);   // nichts dahinter muss mitgezeichnet werden
     viewport.setViewedComponent (&content, false);
-    viewport.setScrollBarsShown (false, true);
+    viewport.setScrollBarsShown (true, true);   // zweizeilig auf kleinen Bildschirmen: auch senkrecht
     viewport.setScrollBarThickness (8);
     addAndMakeVisible (viewport);
 
@@ -178,13 +178,36 @@ void BoardView::layoutCards()
         return;
     }
 
-    const int cardW = juce::jlimit (180, 300, (viewW - gap * (n + 1)) / n);
-    const int cardH = juce::jmax (420, viewH - gap * 2);
-
+    // Zeilen: eine neue Zeile beginnt bei jeder Person aus boardBreaks (nicht bei der ersten Kachel)
+    const auto& breaks = app.state.getSettings().boardBreaks;
+    std::vector<int> rowOf ((size_t) n, 0);
+    int rows = 1, longest = 0, inRow = 0;
     for (int i = 0; i < n; ++i)
-        cardRects.push_back (juce::Rectangle<int> (gap + i * (cardW + gap), gap, cardW, cardH).toFloat());
+    {
+        if (i > 0 && breaks.contains (cardIds[i]))
+        {
+            longest = juce::jmax (longest, inRow);
+            ++rows;
+            inRow = 0;
+        }
+        rowOf[(size_t) i] = rows - 1;
+        ++inRow;
+    }
+    longest = juce::jmax (longest, inRow);
 
-    content.setSize (juce::jmax (viewW, gap + n * (cardW + gap)), cardH + gap * 2);
+    const int cardW = juce::jlimit (180, 300, (viewW - gap * (longest + 1)) / longest);
+    const int cardH = juce::jmax (rows > 1 ? 380 : 420, (viewH - gap * (rows + 1)) / rows);
+
+    int col = 0;
+    for (int i = 0; i < n; ++i)
+    {
+        col = (i > 0 && rowOf[(size_t) i] != rowOf[(size_t) i - 1]) ? 0 : (i == 0 ? 0 : col + 1);
+        cardRects.push_back (juce::Rectangle<int> (gap + col * (cardW + gap), gap + rowOf[(size_t) i] * (cardH + gap), cardW, cardH).toFloat());
+    }
+
+    content.setSize (juce::jmax (viewW - (rows > 1 && rows * (cardH + gap) + gap > viewport.getHeight() ? viewport.getScrollBarThickness() : 0),
+                                 gap + longest * (cardW + gap)),
+                     rows * (cardH + gap) + gap);
     content.repaint();
 }
 
@@ -205,7 +228,7 @@ void BoardView::paint (juce::Graphics& g)
         g.drawText (txt ("DASHBOARD ANPASSEN"), t.removeFromLeft (170.0f), juce::Justification::centredLeft);
         g.setColour (Theme::textDim);
         g.setFont (Theme::font (12.5f));
-        g.drawText (txt ("Kacheln mit der Maus ziehen oder mit ◀ ▶ verschieben · Auge blendet ein/aus · "
+        g.drawText (txt ("Kacheln ziehen oder mit ◀ ▶ verschieben · Auge = ein/aus · ↵ = ab hier zweite Zeile · "
                          "gilt für diesen Rechner, jedes Browser-Gerät hat sein eigenes Layout."),
                     t.withTrimmedRight (120.0f), juce::Justification::centredLeft, true);
     }
@@ -284,7 +307,8 @@ void BoardView::Content::paint (juce::Graphics& g)
     {
         if (auto* u = owner.app.state.findUser (ids[owner.drag.index]))
         {
-            auto r = rects[(size_t) owner.drag.index].withX (owner.drag.mouseX - owner.drag.grabX).translated (0.0f, -6.0f);
+            auto r = rects[(size_t) owner.drag.index].withPosition (owner.drag.mouseX - owner.drag.grabX,
+                                                                   owner.drag.mouseY - owner.drag.grabY - 6.0f);
             juce::DropShadow (juce::Colours::black.withAlpha (0.6f), 28, { 0, 12 }).drawForRectangle (g, r.toNearestInt());
             owner.paintCard (g, r, *u, owner.drag.drop);
             owner.paintEditOverlay (g, r, *u, owner.drag.drop, n);
@@ -304,9 +328,11 @@ BoardView::ToolRects BoardView::toolRectsFor (juce::Rectangle<float> card)
 {
     auto row = card.reduced (10.0f).removeFromBottom (44.0f);
     ToolRects t;
-    t.left = row.removeFromLeft (40.0f);
-    t.right = row.removeFromRight (40.0f);
-    t.eye = row.reduced (5.0f, 0.0f);
+    t.left = row.removeFromLeft (38.0f);
+    t.right = row.removeFromRight (38.0f);
+    row.reduce (4.0f, 0.0f);
+    t.rowBreak = row.removeFromRight (38.0f);
+    t.eye = row.withTrimmedRight (4.0f);
     return t;
 }
 
@@ -318,6 +344,7 @@ BoardView::Tool BoardView::toolAt (int cardIndex, juce::Point<float> p) const
     const auto t = toolRectsFor (cardRects[(size_t) cardIndex]);
     if (t.left.contains (p))  return Tool::left;
     if (t.right.contains (p)) return Tool::right;
+    if (t.rowBreak.contains (p)) return Tool::rowBreak;
     if (t.eye.contains (p))   return Tool::eye;
     return Tool::none;
 }
@@ -348,7 +375,9 @@ void BoardView::Content::mouseDown (const juce::MouseEvent& e)
     {
         owner.drag.index = i;
         owner.drag.grabX = e.position.x - owner.cardRects[(size_t) i].getX();
+        owner.drag.grabY = e.position.y - owner.cardRects[(size_t) i].getY();
         owner.drag.mouseX = e.position.x;
+        owner.drag.mouseY = e.position.y;
         owner.drag.drop = i;
     }
 }
@@ -364,15 +393,20 @@ void BoardView::Content::mouseDrag (const juce::MouseEvent& e)
 
     d.active = true;
     d.mouseX = e.position.x;
+    d.mouseY = e.position.y;
 
-    // Ziel-Slot: dort, wo die Mitte der gezogenen Kachel gerade ist
+    // Ziel-Slot: der Platz, dessen Mitte der Mitte der gezogenen Kachel am nächsten ist (auch zeilenübergreifend)
     const auto& rects = owner.cardRects;
-    const float centre = d.mouseX - d.grabX + rects[(size_t) d.index].getWidth() * 0.5f;
-    int drop = 0;
-    for (int s = 0; s < (int) rects.size() - 1; ++s)
-        if (centre > rects[(size_t) s].getCentreX() + (rects[(size_t) s].getWidth() + (float) gap) * 0.5f)
-            drop = s + 1;
-    d.drop = juce::jlimit (0, (int) rects.size() - 1, drop);
+    const auto& own = rects[(size_t) d.index];
+    const juce::Point<float> centre (d.mouseX - d.grabX + own.getWidth() * 0.5f, d.mouseY - d.grabY + own.getHeight() * 0.5f);
+    int drop = d.index;
+    float best = 1.0e9f;
+    for (int s = 0; s < (int) rects.size(); ++s)
+    {
+        const float dist = rects[(size_t) s].getCentre().getDistanceFrom (centre);
+        if (dist < best) { best = dist; drop = s; }
+    }
+    d.drop = drop;
 
     const auto rel = e.getEventRelativeTo (&owner.viewport);
     owner.viewport.autoScroll (rel.x, rel.y, 60, 14);
@@ -409,6 +443,7 @@ void BoardView::Content::mouseUp (const juce::MouseEvent& e)
         case Tool::left:  owner.moveCard (i, i - 1); break;
         case Tool::right: owner.moveCard (i, i + 1); break;
         case Tool::eye:   owner.toggleHidden (owner.cardIds[i]); break;
+        case Tool::rowBreak: owner.toggleRowBreak (owner.cardIds[i]); break;
         case Tool::none:  break;
     }
 }
@@ -422,8 +457,30 @@ void BoardView::moveCard (int from, int to)
         return;
     }
 
+    // Zeilenumbrüche bleiben an ihrer Position (nicht an der Person): Zeile 2 beginnt weiter an derselben Stelle
+    juce::Array<int> breakPositions;
+    for (auto& b : app.state.getSettings().boardBreaks)
+        if (const int p = cardIds.indexOf (b); p > 0)
+            breakPositions.add (p);
+
     cardIds.move (from, to);
+
+    juce::StringArray breaks;
+    for (int p : breakPositions)
+        breaks.add (cardIds[p]);
+    app.state.setBoardBreaks (breaks);
+
     commitLayout();
+}
+
+void BoardView::toggleRowBreak (const juce::String& userId)
+{
+    auto breaks = app.state.getSettings().boardBreaks;
+    if (breaks.contains (userId))
+        breaks.removeString (userId);
+    else if (cardIds.indexOf (userId) > 0)
+        breaks.add (userId);
+    app.state.setBoardBreaks (breaks);
 }
 
 void BoardView::toggleHidden (const juce::String& userId)
@@ -513,6 +570,36 @@ void BoardView::paintEditOverlay (juce::Graphics& g, juce::Rectangle<float> r, c
         g.fillPath (p);
     };
 
+    {
+        // Zeilenumbruch: "neue Zeile ab dieser Kachel"
+        const bool isBreak = index > 0 && app.state.getSettings().boardBreaks.contains (u.id);
+        const auto col = button (t.rowBreak, index > 0, isHoverCard && hoverTool == Tool::rowBreak);
+        if (isBreak)
+        {
+            g.setColour (Theme::accent.withAlpha (0.25f));
+            g.fillRoundedRectangle (t.rowBreak.reduced (1.5f), 9.0f);
+        }
+        const auto c = t.rowBreak.getCentre();
+        juce::Path p;   // ↵-Symbol
+        p.startNewSubPath (c.x + 7.0f, c.y - 7.0f);
+        p.lineTo (c.x + 7.0f, c.y + 2.0f);
+        p.lineTo (c.x - 6.0f, c.y + 2.0f);
+        g.setColour (isBreak ? Theme::accent : col);
+        g.strokePath (p, juce::PathStrokeType (2.0f));
+        juce::Path arrow;
+        arrow.addTriangle (c.x - 9.0f, c.y + 2.0f, c.x - 4.0f, c.y - 2.5f, c.x - 4.0f, c.y + 6.5f);
+        g.fillPath (arrow);
+
+        if (isBreak)
+        {
+            // Hinweis an der linken Kante: hier beginnt eine neue Zeile
+            g.setColour (Theme::accent);
+            g.setFont (Theme::font (11.0f, true));
+            g.drawText (txt ("NEUE ZEILE"), r.withTop (r.getBottom() - 112.0f).withHeight (18.0f).reduced (12.0f, 0.0f),
+                        juce::Justification::centredLeft, false);
+        }
+    }
+
     triangle (t.left,  true,  button (t.left,  index > 0,         isHoverCard && hoverTool == Tool::left));
     triangle (t.right, false, button (t.right, index < count - 1, isHoverCard && hoverTool == Tool::right));
 
@@ -520,7 +607,7 @@ void BoardView::paintEditOverlay (juce::Graphics& g, juce::Rectangle<float> r, c
     {
         auto b = t.eye;
         const auto label = hidden ? txt ("Aus") : txt ("An");
-        const bool withLabel = b.getWidth() >= 70.0f;
+        const bool withLabel = b.getWidth() >= 66.0f;
         auto icon = juce::Rectangle<float> (22.0f, 14.0f).withCentre ({ withLabel ? b.getCentreX() - 12.0f : b.getCentreX(), b.getCentreY() });
         juce::Path eye;
         eye.startNewSubPath (icon.getX(), icon.getCentreY());
@@ -761,6 +848,7 @@ void BoardView::paintCommunication (juce::Graphics& g, juce::Rectangle<float> ar
         {
             juce::Graphics ig (img);
             ig.addTransform (juce::AffineTransform::translation (-area.getX(), -area.getY()).scaled (scale));
+            ig.reduceClipRegion (area.toNearestInt());
             paintCommunicationText (ig, area, u, alerting, items.size(),
                                     [&items] (size_t i) { const auto& it = items[i]; return std::make_tuple (it.text, it.meta, it.mention, it.live); });
         }
@@ -861,12 +949,67 @@ void BoardView::paintCardStatic (juce::Graphics& g, juce::Rectangle<float> r, co
 
 }
 
+void BoardView::paintIem (juce::Graphics& g, juce::Rectangle<float> area, const AppController::RfInfo& iem)
+{
+    const auto& s = iem.state;
+    const bool live = ! iem.disabled && iem.online && iem.known;
+    const bool rfOn = live && s.rfOn;
+
+    g.setColour (juce::Colours::black.withAlpha (0.28f));
+    g.fillRoundedRectangle (area.reduced (0.0f, 2.0f), 7.0f);
+
+    auto a = area.reduced (8.0f, 4.0f);
+    auto left = a.removeFromLeft (juce::jmin (112.0f, a.getWidth() * 0.5f));
+
+    // Zeile 1: "IEM" + HF-Status
+    auto top = left.removeFromTop (left.getHeight() * 0.5f);
+    g.setFont (Theme::font (10.5f, true));
+    g.setColour (Theme::textDim);
+    g.drawText ("IEM", top.removeFromLeft (28.0f), juce::Justification::centredLeft);
+    const auto statusCol = iem.disabled ? Theme::textFaint : ! live ? Theme::textFaint : rfOn ? Theme::ok : Theme::record;
+    g.setColour (statusCol);
+    g.fillEllipse (juce::Rectangle<float> (7.0f, 7.0f).withCentre ({ top.getX() + 4.0f, top.getCentreY() }));
+    g.drawText (iem.disabled ? txt ("aus") : ! live ? txt ("offline") : rfOn ? txt ("RF AN") : txt ("RF AUS"),
+                top.withTrimmedLeft (11.0f), juce::Justification::centredLeft);
+
+    // Zeile 2: Kanalname
+    g.setColour (Theme::textFaint);
+    g.setFont (Theme::font (10.0f, true));
+    g.drawText (juce::String (s.name), left, juce::Justification::centredLeft, true);
+
+    // Eingangspegel L/R als waagerechte Balken
+    auto meters = a.withTrimmedLeft (6.0f);
+    const float h = juce::jmin (6.0f, (meters.getHeight() - 6.0f) / 2.0f);
+    auto bar = [&] (juce::Rectangle<float> b, float db, const char* ch)
+    {
+        g.setColour (Theme::textFaint);
+        g.setFont (Theme::font (9.0f, true));
+        g.drawText (ch, b.removeFromLeft (10.0f).expanded (0.0f, 3.0f), juce::Justification::centredLeft);
+        g.setColour (juce::Colours::white.withAlpha (0.08f));
+        g.fillRoundedRectangle (b, 2.0f);
+        if (! live || std::isnan (db))
+            return;
+        const float v = juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 60.0f);
+        auto fill = b.withWidth (b.getWidth() * v);
+        juce::ColourGradient grad (Theme::ok, b.getX(), 0.0f, Theme::record, b.getRight(), 0.0f, false);
+        grad.addColour (0.75, Theme::alert);
+        g.setGradientFill (grad);
+        g.fillRoundedRectangle (fill, 2.0f);
+    };
+    auto m1 = meters.withHeight (h).withCentre ({ meters.getCentreX(), meters.getCentreY() - h * 0.5f - 2.0f });
+    auto m2 = m1.translated (0.0f, h + 4.0f);
+    bar (m1, s.inputLeftDb, "L");
+    bar (m2, s.inputRightDb, "R");
+}
+
 void BoardView::paintCard (juce::Graphics& g, juce::Rectangle<float> r, const UserProfile& u, int index)
 {
     const auto rf = app.getRfInfo (u);
+    const auto iem = app.getIemInfo (u);
+    const bool hasIem = iem.assigned;
     const auto& st = rf.state;
     const bool speaking = app.engine.isSpeaking (u.channel);
-    const bool hasRf = rf.assigned && rf.online && rf.known;
+    const bool hasRf = rf.assigned && ! rf.disabled && rf.online && rf.known;
     const int batt = hasRf && st.txOn ? st.batteryPercentEstimate() : -1;
 
     // --- Zustand -----------------------------------------------------------
@@ -875,7 +1018,12 @@ void BoardView::paintCard (juce::Graphics& g, juce::Rectangle<float> r, const Us
                           && (batt <= 15 || (st.batteryMinutes >= 0 && st.batteryMinutes < 30));
     const bool weakRf = hasRf && st.txOn && st.signalNormalised() < 0.2f;
     const bool warning = ! critical && hasRf && st.txOn && ((batt >= 0 && batt <= 35) || weakRf);
-    const bool offline = rf.assigned && ! rf.online;
+    const bool offline = rf.assigned && ! rf.disabled && ! rf.online;
+
+    // Mute: Mikrofon-Sender (AF/RF) oder In-Ear-Sender mit abgeschaltetem HF
+    const bool micAf = hasRf && st.afMuted, micRf = hasRf && st.rfMuted;
+    const bool iemRfMuted = iem.assigned && ! iem.disabled && iem.online && iem.known && ! iem.state.rfOn;
+    const bool anyMute = micAf || micRf || iemRfMuted;
 
     const auto status = critical ? Theme::record
                       : warning  ? Theme::alert
@@ -886,15 +1034,18 @@ void BoardView::paintCard (juce::Graphics& g, juce::Rectangle<float> r, const Us
     auto inner = r.reduced (14.0f, 12.0f);
     auto header = inner.removeFromTop (64.0f);
     const float footerH = 42.0f;
-    const float graphH = juce::jlimit (70.0f, 130.0f, r.getHeight() * 0.17f);
+    const float graphH = juce::jlimit (35.0f, 65.0f, r.getHeight() * 0.085f);   // halbe Höhe: mehr Platz fürs Foto
     auto footer = inner.removeFromBottom (footerH);
     auto graph = inner.removeFromBottom (graphH).expanded (14.0f, 0.0f);
     auto badges = inner.removeFromBottom (28.0f);
+    auto iemArea = hasIem ? inner.removeFromBottom (34.0f) : juce::Rectangle<float>();
 
     // Talkback-Person: Foto im oberen Drittel, darunter die Kommunikation.
     // Nur-Funk-Person (Redner, Band): großes Foto über die ganze Höhe.
     const bool talkbackCard = u.talkbackLog;
-    const float photoBottom = talkbackCard ? juce::jmax (header.getBottom() + 80.0f, r.getY() + r.getHeight() / 3.0f + 10.0f)
+    // Niedrige Kacheln (zweizeilig): Foto kleiner, damit die letzten Ansagen Platz haben
+    const float photoBottom = talkbackCard ? (r.getHeight() < 520.0f ? header.getBottom() + juce::jlimit (56.0f, 120.0f, r.getHeight() * 0.18f)
+                                                                     : juce::jmax (header.getBottom() + 80.0f, r.getY() + r.getHeight() / 3.0f + 10.0f))
                                            : inner.getBottom();
     auto lastArea = talkbackCard ? inner.withTop (photoBottom + 6.0f).withTrimmedBottom (4.0f)
                                  : inner.withTop (inner.getBottom()).withHeight (0.0f);
@@ -912,7 +1063,7 @@ void BoardView::paintCard (juce::Graphics& g, juce::Rectangle<float> r, const Us
             const float scale = g.getInternalContext().getPhysicalPixelScaleFactor();
             const auto key = juce::String (r.getWidth()) + "x" + juce::String (r.getHeight()) + "@" + juce::String (scale)
                            + "#" + u.colour.toString() + "#" + u.avatarFile + "#" + (u.talkbackLog ? "tb" : "rf")
-                           + "#" + (app.state.isAvatarCutout (u.id) ? "cut" : "") + "#" + u.name;
+                           + "#" + (app.state.isAvatarCutout (u.id) ? "cut" : "") + "#" + u.name + (hasIem ? "#iem" : "");
             auto& cache = staticCache[u.id];
 
             if (cache.key != key || ! cache.image.isValid())
@@ -934,9 +1085,20 @@ void BoardView::paintCard (juce::Graphics& g, juce::Rectangle<float> r, const Us
         // --- Graph: HF-Signal (Fläche) + Talkback-Pegel (weiße Linie) -----
         auto plot = graph.reduced (0.0f, 6.0f);
 
-        const auto tb = talkbackHistory.find (u.id);
-        const bool haveTb = tb != talkbackHistory.end() && u.channel >= 0
-                            && std::any_of (tb->second.begin(), tb->second.end(), [] (float v) { return v > 0.02f; });
+        // Pegelverlauf: vom Audio-Interface (Talkback) oder direkt von der Funkstrecke
+        const std::deque<float>* level = nullptr;
+        int levelCapacity = talkbackHistoryLength;
+        const bool fromWireless = rf.audioHistory != nullptr && (u.levelFromWireless || ! AppState::logsTalkback (u));
+        if (fromWireless)
+        {
+            level = rf.audioHistory;
+            levelCapacity = WirelessManager::historyLength;
+        }
+        else if (auto it = talkbackHistory.find (u.id); it != talkbackHistory.end() && u.channel >= 0)
+        {
+            level = &it->second;
+        }
+        const bool haveTb = level != nullptr && std::any_of (level->begin(), level->end(), [] (float v) { return v > 0.02f; });
 
         if (rf.assigned && rf.history != nullptr && ! rf.history->empty())
         {
@@ -951,18 +1113,18 @@ void BoardView::paintCard (juce::Graphics& g, juce::Rectangle<float> r, const Us
             if (haveTb)
             {
                 g.setColour (juce::Colours::white.withAlpha (0.85f));
-                g.strokePath (historyPath (tb->second, plot, talkbackHistoryLength, false), juce::PathStrokeType (1.1f));
+                g.strokePath (historyPath (*level, plot, levelCapacity, false), juce::PathStrokeType (1.1f));
             }
         }
         else if (haveTb)
         {
-            auto area = historyPath (tb->second, plot, talkbackHistoryLength, true);
+            auto area = historyPath (*level, plot, levelCapacity, true);
             juce::ColourGradient fill (u.colour.withAlpha (0.7f), plot.getX(), plot.getY(),
                                        u.colour.withAlpha (0.1f), plot.getX(), plot.getBottom(), false);
             g.setGradientFill (fill);
             g.fillPath (area);
             g.setColour (u.colour.brighter (0.3f));
-            g.strokePath (historyPath (tb->second, plot, talkbackHistoryLength, false), juce::PathStrokeType (1.2f));
+            g.strokePath (historyPath (*level, plot, levelCapacity, false), juce::PathStrokeType (1.2f));
         }
 
         if (speaking)
@@ -989,7 +1151,7 @@ void BoardView::paintCard (juce::Graphics& g, juce::Rectangle<float> r, const Us
         g.setFont (Theme::font (11.0f, true));
         g.drawText (juce::String (index + 1).paddedLeft ('0', 2), topRow, juce::Justification::centredLeft);
 
-        if (rf.assigned)
+        if (rf.assigned && ! rf.disabled)
             drawBattery (g, topRow.removeFromRight (46.0f).reduced (0.0f, 1.0f), batt, batt >= 0);
 
         auto nameRow = h.removeFromTop (30.0f);
@@ -1024,7 +1186,35 @@ void BoardView::paintCard (juce::Graphics& g, juce::Rectangle<float> r, const Us
     else if (weakRf)    drawPill (g, badges, txt ("SCHWACHES SIGNAL"), Theme::alert, Theme::background);
     else if (warning)   drawPill (g, badges, txt ("AKKU NIEDRIG"), Theme::alert, Theme::background);
     else if (speaking)  drawPill (g, badges, txt ("SPRICHT"), u.colour, Theme::background);
-    else if (st.muted && hasRf) drawPill (g, badges, txt ("STUMM"), Theme::textFaint.withAlpha (0.6f), Theme::text);
+    else if (rf.disabled) drawPill (g, badges, txt ("ÜBERWACHUNG AUS"), Theme::textFaint.withAlpha (0.6f), Theme::text);
+
+    // --- In-Ear (Axient Digital PSM): HF an/aus + Eingangspegel L/R --------------
+    if (hasIem)
+        paintIem (g, iemArea, iem);
+
+    // --- Mute: dicker roter Rahmen + Hinweis, ob AF oder RF ----------------------
+    if (anyMute)
+    {
+        g.setColour (Theme::record);
+        g.drawRoundedRectangle (r.reduced (3.0f), cardRadius - 2.0f, 6.0f);
+
+        juce::StringArray what;
+        if (micAf || micRf)
+            what.add (micAf && micRf ? "AF + RF" : micAf ? "AF" : "RF");
+        if (iemRfMuted)
+            what.add ("IEM RF");
+        const auto label = "MUTE  " + what.joinIntoString ("  ·  ");
+
+        const auto f = Theme::font (15.0f, true);
+        const float w = juce::GlyphArrangement::getStringWidth (f, label) + 28.0f;
+        auto pill = juce::Rectangle<float> (juce::jmin (w, r.getWidth() - 20.0f), 30.0f)
+                        .withCentre ({ r.getCentreX(), photoBottom - 20.0f });
+        g.setColour (Theme::record);
+        g.fillRoundedRectangle (pill, 7.0f);
+        g.setColour (juce::Colours::white);
+        g.setFont (f);
+        g.drawText (label, pill, juce::Justification::centred, true);
+    }
 
     // --- Fußzeile -------------------------------------------------------------
     {
@@ -1034,7 +1224,15 @@ void BoardView::paintCard (juce::Graphics& g, juce::Rectangle<float> r, const Us
 
         g.setFont (Theme::font (13.0f, true));
 
-        if (rf.assigned)
+        if (rf.assigned && rf.disabled)
+        {
+            g.setColour (Theme::textDim);
+            g.drawText (txt ("Funk: Überwachung aus"), line1, juce::Justification::centredLeft);
+            g.setFont (Theme::font (11.0f, true));
+            g.setColour (Theme::textFaint);
+            g.drawText (txt ("in den Einstellungen deaktiviert"), line2, juce::Justification::centredLeft, true);
+        }
+        else if (rf.assigned)
         {
             g.setColour (Theme::text);
             g.drawText (hasRf ? formatFrequency (st.frequencyKHz) : txt ("–"), line1, juce::Justification::centredLeft);

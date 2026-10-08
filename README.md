@@ -7,9 +7,11 @@
 - **Board im RF-Board-Stil**: Pro Person eine hohe Kachel mit Foto, Lichtstrahlen in ihrer Farbe, Akku oben rechts, letzter Ansage, Verlauf von HF-Signal und Talkback-Pegel sowie Frequenz, Restlaufzeit und dBm. Warnungen wie *Akku kritisch*, *Akku niedrig*, *Schwaches Signal* oder *Sender aus* erscheinen direkt auf der Kachel.
 - **Talkback mitloggen – pro Person wählbar**: Talkback-Personen bekommen eine Kachel mit Foto im oberen Drittel und darunter ihren letzten Ansagen; fällt dein Name, leuchtet dieses Feld, bis du den Alarm quittierst. Personen ohne Talkback (Redner, Bandmitglieder) werden nur funküberwacht und erscheinen als große Foto-Kachel mit Akku und HF-Verlauf.
 - **Freigestellte Profilbilder**: Wie auf dem RF-Board steht die Person ohne Hintergrund vor den Lichtstrahlen ihrer Farbe – bei Nur-Funk-Kacheln groß, mit leichtem Schein. Der Hintergrund wird beim Import automatisch entfernt (auf dem Mac ab macOS 12 mit Apples Personen-Erkennung, sonst mit einem eigenen Verfahren, das bei ruhigem Hintergrund gut funktioniert). PNGs mit Transparenz werden direkt übernommen. Pro Person abschaltbar.
-- **Dashboard anpassen – für jeden**: Am Rechner und auf jedem Browser-Gerät lässt sich einzeln festlegen, wer auf dem Board erscheint und in welcher Reihenfolge (Kacheln ziehen oder mit ◀ ▶ verschieben, Auge = ein/aus).
+- **Dashboard anpassen – für jeden**: Am Rechner und auf jedem Browser-Gerät lässt sich einzeln festlegen, wer auf dem Board erscheint und in welcher Reihenfolge (Kacheln ziehen oder mit ◀ ▶ verschieben, Auge = ein/aus). Mit ↵ beginnt ab einer Kachel eine **zweite Zeile**.
+- **Mute auf einen Blick**: Ist ein Sender stumm geschaltet, bekommt die Kachel einen dicken roten Rahmen und den Hinweis **MUTE AF** (Audio stumm), **MUTE RF** (Träger aus) oder **MUTE IEM RF** (In-Ear-Sender ohne HF).
+- **Favoriten**: Oben in der Kopfleiste und als eigene Tabs erscheinen nur Personen mit Stern (Personen → *Favorit*). Ein Klick auf eine andere Kachel öffnet ihren Tab trotzdem.
 - **Browser-Zugriff**: Eingebauter Webserver (Port 8080). Jedes Handy/Tablet/Laptop bekommt automatisch eine eigene Geräte-ID mit eigener Oberfläche, eigenem Dashboard-Layout und eigenem Alarm-Namen (inkl. Ton und Vibration). Personen anlegen, löschen und Geräte entfernen geht nur am Host.
-- **Funkempfänger im Netzwerk**: Shure ULX-D, QLX-D, SLX-D und Axient Digital (TCP 2202) sowie Sennheiser EW-DX EM 2/EM 4 (SSCv1, UDP 45). Jeder Person wird ihr Funkkanal zugewiesen.
+- **Funk im Netzwerk**: Shure Axient Digital (AD4D/AD4Q, ADX), SLX-D, SLX-D+, QLX-D und Axient Digital PSM (In-Ear, ADTD/ADTQ) über TCP 2202 sowie Sennheiser EW-DX EM 2/EM 4 (SSCv1, UDP 45). Jeder Person werden Mikrofon-Funkstrecke und In-Ear-Sender zugewiesen; der Audiopegel kann direkt vom Empfänger kommen. Geräte und einzelne Kanäle lassen sich abschalten.
 - **Eine Person pro Eingang**: Jedes Talkback-Mikro liegt auf einem eigenen Kanal des Audio-Interfaces. Dadurch ist immer eindeutig, wer gesprochen hat – ohne fehleranfällige Stimmerkennung.
 - **Benutzer mit Avataren**: Name, Funktion (FOH, Monitor, Licht …), Farbe, Profilbild (Klick oder Drag & Drop), Eingang und Sprach-Schwelle mit Live-Pegel.
 - **Tabs**: *Konversation* (alle chronologisch), *Erwähnungen*, ein Tab pro Person, *Personen*, *Einstellungen*.
@@ -106,7 +108,7 @@ ctest --test-dir build -C Release --output-on-failure
 ```
 
 - `core`: Namenssuche (Umlaute, Mehrwort-Namen, Genitiv, unscharf) und Sprach-Gate.
-- `core` prüft außerdem den Shure-Parser mit Antworten von ULX-D, SLX-D und Axient Digital.
+- `core` prüft außerdem den Shure-Parser mit Antworten von QLX-D/ULX-D, SLX-D/SLX-D+, Axient Digital (inkl. AF-/RF-Mute) und AD PSM.
 - `engine`: Die komplette Audio-Engine mit einem simulierten 8-Kanal-Interface – automatische Kanal-Aktivierung, Schnitt, Zeitstempel, Signalinhalt, Pause – sowie die Netzwerk-Clients gegen einen simulierten Shure-ULX-D- und Sennheiser-EW-DX-Empfänger.
 
 ## Erste Schritte
@@ -125,10 +127,10 @@ Zum Ausprobieren ohne Interface und ohne Funk: Programm mit `--demo` starten. Da
 Unter **Einstellungen → Webzugriff** stehen die Adressen, z. B. `http://192.168.1.20:8080`. Diese Adresse auf dem Handy, Tablet oder einem zweiten Rechner im selben Netz öffnen:
 
 1. Beim ersten Aufruf bekommt das Gerät eine eigene ID (z. B. `/d/7F5W7T`) und behält sie (im Browser gespeichert).
-2. Oben **Mein Name** eintragen – fällt dieser Name, alarmiert genau dieses Gerät (Banner, leuchtendes Feld, mit **Ton an** auch akustisch und per Vibration).
-3. Über **Dashboard anpassen** festlegen, wen dieses Gerät sieht und in welcher Reihenfolge: Kacheln ziehen (am Handy am runden Griff), mit ◀ ▶ verschieben, mit dem Auge ein- und ausblenden. Das Layout wird am Host pro Gerät gespeichert.
+2. Oben **Mein Name** eintragen – fällt dieser Name, alarmiert genau dieses Gerät (Banner, leuchtendes Feld, auf dem Handy zusätzlich Vibration; kein Ton).
+3. Über **Dashboard anpassen** festlegen, wen dieses Gerät sieht und in welcher Reihenfolge: Kacheln ziehen (am Handy am runden Griff), mit ◀ ▶ verschieben, mit dem Auge ein- und ausblenden, mit ↵ eine zweite Zeile beginnen. Das Layout wird am Host pro Gerät gespeichert.
 
-Am Host sind alle Geräte unter *Webzugriff* aufgelistet (Name, Alarm-Name, zuletzt gesehen) und lassen sich dort entfernen. macOS fragt beim ersten Start, ob ShowCom eingehende Verbindungen annehmen darf – erlauben.
+Jedes Gerät meldet sich mit seinem Namen an: dem Netzwerknamen, wenn der Router ihn kennt (z. B. „Tjarks-iPad“), sonst Gerätetyp und Browser („iPhone · Safari“). Am Host sind alle Geräte unter *Webzugriff* aufgelistet; dort lässt sich der Name ändern (er bleibt für dieses Gerät gespeichert) und ein Gerät entfernen. macOS fragt beim ersten Start, ob ShowCom eingehende Verbindungen annehmen darf – erlauben.
 
 Hinweis: Der Webzugriff hat kein Passwort. Nur in vertrauenswürdigen Netzen (Produktionsnetz) betreiben.
 
@@ -140,14 +142,21 @@ Hinweis: Der Webzugriff hat kein Passwort. Nur in vertrauenswürdigen Netzen (Pr
 
 ## Funkempfänger anbinden
 
-Unter **Einstellungen → Funkempfänger** jeden Empfänger mit Typ und IP-Adresse eintragen (optional mit Port, z. B. `192.168.1.50:2202`). Der Status-Punkt wird grün, sobald Daten kommen. Danach unter **Personen → Funkstrecke** den passenden Kanal wählen – die Liste zeigt die Kanalnamen, die am Empfänger eingestellt sind.
+Unter **Einstellungen → Funkempfänger** jeden Empfänger mit Typ und IP-Adresse eintragen (optional mit Port, z. B. `192.168.1.50:2202`). Der Status-Punkt wird grün, sobald Daten kommen. Danach unter **Personen → Funkstrecke** bzw. **In-Ear-Sender** den passenden Kanal wählen – die Liste zeigt die Kanalnamen, die am Gerät eingestellt sind.
+
+- **aktiv** abwählen: Das Gerät wird nicht mehr verbunden und nicht überwacht (z. B. Ersatz-Rack). Die Kanal-Knöpfe **1–4** schalten einzelne Empfänger- bzw. Senderkanäle ab – die Kachel zeigt dann „Überwachung aus“, ohne Warnungen.
+- **Pegel direkt von der Funkstrecke**: Unter *Personen* „Pegel direkt von der Funkstrecke anzeigen“ – der Verlauf auf der Kachel kommt dann vom Empfänger statt vom Audio-Interface. Bei Personen ohne Talkback passiert das automatisch.
+- **Protokoll …** speichert die zuletzt empfangenen Meldungen und unbekannte Befehle eines Geräts als Textdatei – für die Fehlersuche.
 
 | Hersteller | Geräte | Protokoll | Am Gerät einstellen |
 |---|---|---|---|
-| Shure | ULX-D, QLX-D, SLX-D, Axient Digital | TCP 2202, ASCII-Befehle | nichts (Standard). Rechner und Empfänger im selben Netz. |
+| Shure | Axient Digital (AD4D, AD4Q, ADX-Sender), SLX-D, SLX-D+, QLX-D | TCP 2202, ASCII-Befehle | nichts (Standard). Rechner und Empfänger im selben Netz. |
+| Shure | Axient Digital PSM (ADTD, ADTQ) – In-Ear | TCP 2202 (siehe Hinweis) | nichts |
 | Sennheiser | EW-DX EM 2, EM 2 Dante, EM 4 Dante | Sound Control Protocol v1, JSON über UDP 45 | Drittanbieter-Zugriff **„Legacy (SSCv1)“** aktivieren (Control Cockpit → Gerät → *Access*) |
 
-Angezeigt werden – je nachdem, was das Gerät liefert – Akku in % bzw. Balken, Restlaufzeit, Frequenz, HF-Pegel (Shure, dBm) bzw. Signalqualität (Sennheiser, %), aktive Antenne, Sendertyp, Stummschaltung und ob der Sender an ist. ShowCom fragt nur ab; es ändert keine Einstellungen am Empfänger (einzige Ausnahme: bei Shure wird die Meter-Rate auf 1 s gesetzt, damit der Pegelverlauf läuft).
+Angezeigt werden – je nachdem, was das Gerät liefert – Akku in % bzw. Balken, Restlaufzeit, Frequenz, HF-Pegel (Shure, dBm) bzw. Signalqualität (Sennheiser, %), aktive Antenne, Sendertyp, Audiopegel, Mute getrennt nach AF (Mute-Taste/Mute-Modus am Sender, Audio-Mute am Empfänger) und RF (Axient Digital: HF-Ausgang des Senders stumm) und ob der Sender an ist. Beim In-Ear-Sender: HF an/aus und Eingangspegel links/rechts. ShowCom fragt nur ab; es ändert keine Einstellungen am Gerät (einzige Ausnahme: bei Shure wird die Meter-Rate auf 250 ms gesetzt, damit der Pegelverlauf flüssig läuft).
+
+Hinweis zu **Axient Digital PSM**: Shure hat für ADTD/ADTQ noch keine Befehlsliste für Fremdsteuerung veröffentlicht. ShowCom spricht die Sender wie Axient Digital an (gleiche Plattform, TCP 2202) und erkennt HF-Status und Eingangspegel nach diesem Muster. Wenn ein Wert nicht erscheint: im Gerät unter *Protokoll …* die Datei speichern – damit lässt sich die Anbindung genau auf euer Gerät abstimmen.
 
 Hinweis: Das neuere, verschlüsselte SSCv2 der EW-DX (HTTPS mit Passwort) ist noch nicht eingebaut; dafür bitte vorerst SSCv1 aktivieren.
 
