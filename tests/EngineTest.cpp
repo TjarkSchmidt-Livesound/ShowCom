@@ -260,10 +260,14 @@ namespace
             mgr.setDevices ({ off, part });
             check (mgr.getStatus ("off").text == "deaktiviert" && mgr.isDisabled ("off", 1), "Funk: abgeschaltetes Gerät wird nicht überwacht");
             check (mgr.isDisabled ("part", 2) && ! mgr.isDisabled ("part", 1), "Funk: einzelner Kanal abschaltbar");
-            bool listed = false;
+            bool offListed = false, partTwo = false, partOne = false;
             for (auto& r : mgr.listChannels())
-                listed = listed || (r.deviceId == "off" && r.label.contains ("deaktiviert"));
-            check (listed, "Funk: abgeschaltetes Gerät bleibt zuordenbar");
+            {
+                offListed = offListed || r.deviceId == "off";
+                partTwo = partTwo || (r.deviceId == "part" && r.channel == 2);
+                partOne = partOne || (r.deviceId == "part" && r.channel == 1);
+            }
+            check (! offListed && ! partTwo && partOne, "Funk: abgeschaltete Geräte/Kanäle stehen nicht in der Auswahl");
         }
         {
             FakeEwdx fake (24545);
@@ -325,12 +329,13 @@ namespace
 
         auto snap = std::make_shared<WebServer::Snapshot>();
         snap->listening = true;
-        WebServer::Person a; a.id = "u1"; a.name = "Anna"; a.colour = "#ba68c8"; a.talkback = true;
+        WebServer::Person a; a.id = "u1"; a.name = "Anna"; a.colour = "#ba68c8"; a.talkback = true; a.nickname = "Anni, Annchen";
         WebServer::Person b; b.id = "u2"; b.name = "Mia";  b.colour = "#9575cd"; b.talkback = false;
         b.rfAssigned = b.rfOnline = b.rfKnown = true; b.rf.txOn = true; b.rf.batteryPercent = 64; b.rf.frequencyKHz = 470125;
         snap->persons = { a, b };
         snap->entries.push_back ({ 1, "u1", "20:01:02", juce::String::fromUTF8 ("Jürgen, kommst du mal zur Bühne?"), 3 });
         snap->entries.push_back ({ 2, "u1", "20:01:09", "Alles gut.", 4 });
+        snap->entries.push_back ({ 3, "u2", "20:01:15", "Anni, Licht auf die Bühne bitte.", 5 });
         web.publish (snap);
 
         web.configure (true, 18765);
@@ -383,6 +388,13 @@ namespace
         // Personen lassen sich über das Web weder anlegen noch löschen
         httpRequest (18765, "POST", "/api/d/" + id + "/addPerson", R"({"name":"X"})", st);
         check (st == 404, "Web: kein Anlegen von Personen über das Web");
+
+        // Spitznamen: Alarm-Name "Anna" löst auch bei "Anni" aus
+        httpRequest (18765, "POST", "/api/d/" + id + "/settings", R"({"keywords":"Anna"})", st);
+        state = juce::JSON::parse (httpRequest (18765, "GET", "/api/d/" + id + "/state", {}, st));
+        check ((bool) state["entries"][2]["mention"] && state["persons"][1]["nickname"].toString().startsWith ("Anni"),
+               "Web: Spitzname löst den Alarm aus");
+        httpRequest (18765, "POST", "/api/d/" + id + "/settings", R"({"keywords":"Juergen"})", st);
 
         // Ein zweites Gerät hat seine eigene Sicht
         const auto id2 = juce::JSON::parse (httpRequest (18765, "POST", "/api/register", {}, st))["id"].toString();

@@ -1,6 +1,7 @@
 #include "WebServer.h"
 #include "KeywordMatcher.h"
 #include "BoardLayout.h"
+#include "Nicknames.h"
 
 #include <BinaryData.h>
 
@@ -458,8 +459,12 @@ WebServer::Response WebServer::stateJson (const juce::String& deviceId)
     }
 
     // Jedes Gerät hat seinen eigenen Alarm-Namen
+    // Eigener Alarm-Name des Geräts – inkl. Spitznamen der Person, falls es ihr Name ist
+    std::vector<std::pair<juce::String, juce::String>> people;
+    for (auto& p : snap->persons)
+        people.push_back ({ p.name, p.nickname });
     KeywordMatcher matcher;
-    matcher.setKeywords (device.keywords.toStdString());
+    matcher.setKeywords (Nicknames::expandKeywords (device.keywords, people).toStdString());
 
     auto entryJson = [&matcher] (const Entry& e, bool live)
     {
@@ -492,6 +497,7 @@ WebServer::Response WebServer::stateJson (const juce::String& deviceId)
         o->setProperty ("id", p.id);
         o->setProperty ("name", p.name);
         o->setProperty ("role", p.role);
+        o->setProperty ("nickname", p.nickname);
         o->setProperty ("colour", p.colour);
         o->setProperty ("avatar", p.avatarKey.isNotEmpty() ? "/avatar/" + p.id + "?v=" + p.avatarKey : juce::String());
         o->setProperty ("talkback", p.talkback);

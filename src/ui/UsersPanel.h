@@ -63,9 +63,9 @@ private:
     juce::TextButton removeAvatarButton { "Bild entfernen" };
     juce::ToggleButton cutoutToggle;
     juce::Rectangle<int> cutoutStatusArea;
-    juce::Label nameLabel { {}, "Name" }, roleLabel { {}, "Funktion" }, channelLabel { {}, "Eingang" },
+    juce::Label nameLabel { {}, "Name" }, roleLabel { {}, "Funktion" }, nickLabel { {}, "Spitzname" }, channelLabel { {}, "Eingang" },
                 thresholdLabel { {}, "Sprach-Schwelle" }, colourLabel { {}, "Farbe" };
-    juce::TextEditor nameEditor, roleEditor;
+    juce::TextEditor nameEditor, roleEditor, nickEditor;
     juce::ComboBox channelBox;
     juce::ToggleButton talkbackToggle { "Talkback dieser Person mitloggen" };
     juce::Label rfLabel { {}, "Funkstrecke" };

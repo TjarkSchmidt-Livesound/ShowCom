@@ -1,4 +1,5 @@
 #include "BoardView.h"
+#include "Nicknames.h"
 
 using Theme::txt;
 
@@ -1162,8 +1163,10 @@ void BoardView::paintCard (juce::Graphics& g, juce::Rectangle<float> r, const Us
         g.drawText (u.name, nameRow, juce::Justification::centredLeft, true);
 
         juce::String sub;
+        if (u.nickname.isNotEmpty())
+            sub << Theme::txt ("„") << Nicknames::split (u.nickname)[0] << Theme::txt ("“");
         if (! st.name.empty())
-            sub << juce::String (st.name);
+            sub << (sub.isNotEmpty() ? Theme::txt ("  ·  ") : "") << juce::String (st.name);
         if (u.role.isNotEmpty())
             sub << (sub.isNotEmpty() ? Theme::txt ("  ·  ") : "") << u.role;
 

@@ -29,6 +29,7 @@ public:
     struct Person
     {
         juce::String id, name, role, colour;   // colour als "#rrggbb"
+        juce::String nickname;                 // Spitzname(n), kommagetrennt
         juce::String avatarKey;                // ändert sich, wenn sich das Bild ändert (leer = keins)
         bool talkback = true, speaking = false;
         bool cutout = false;                   // Bild ist freigestellt (transparenter Hintergrund)

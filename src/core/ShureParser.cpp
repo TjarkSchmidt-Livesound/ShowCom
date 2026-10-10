@@ -68,10 +68,16 @@ namespace
     }
 }
 
-std::vector<std::string> ShureParser::initialCommands()
+std::vector<std::string> ShureParser::initialCommands (int numChannels)
 {
     // Meter alle 250 ms: flüssiger Pegel- und HF-Verlauf (kleinster Wert der Geräte: 100 ms)
-    return { "< GET MODEL >", "< GET 0 ALL >", "< SET 0 METER_RATE 00250 >" };
+    std::vector<std::string> cmds { "< GET MODEL >", "< GET DEVICE_ID >", "< GET 0 ALL >", "< SET 0 METER_RATE 00250 >" };
+    for (int ch = 1; ch <= numChannels; ++ch)
+    {
+        cmds.push_back ("< GET " + std::to_string (ch) + " ALL >");
+        cmds.push_back ("< SET " + std::to_string (ch) + " METER_RATE 00250 >");
+    }
+    return cmds;
 }
 
 void ShureParser::detectFamily (const std::string& text)
@@ -120,6 +126,14 @@ std::set<int> ShureParser::feed (const std::string& bytes)
 void ShureParser::handleMessage (const std::vector<std::string>& t, std::set<int>& changed)
 {
     const auto kind = upper (t[0]);
+
+    if (kind == "REP" || kind == "SAMPLE")
+        answered = true;
+    if (kind == "REP" && t.size() >= 2 && upper (t.back()) == "ERR")
+    {
+        ++errors;   // z. B. "< REP ERR >": Befehl kennt das Gerät nicht – kein Problem
+        return;
+    }
 
     if (kind == "REP" && t.size() >= 3 && upper (t[1]) == "MODEL")
     {

@@ -116,6 +116,7 @@ void AppState::load()
                 u.id          = v["id"].toString();
                 u.name        = v["name"].toString();
                 u.role        = v["role"].toString();
+                u.nickname    = v["nickname"].toString();
                 u.avatarFile  = v["avatar"].toString();
                 u.channel     = v.hasProperty ("channel") ? (int) v["channel"] : -1;
                 u.thresholdDb = v.hasProperty ("thresholdDb") ? (float) (double) v["thresholdDb"] : -45.0f;
@@ -170,6 +171,7 @@ void AppState::save() const
         o->setProperty ("id",          u.id);
         o->setProperty ("name",        u.name);
         o->setProperty ("role",        u.role);
+        o->setProperty ("nickname",    u.nickname);
         o->setProperty ("avatar",      u.avatarFile);
         o->setProperty ("channel",     u.channel);
         o->setProperty ("thresholdDb", u.thresholdDb);

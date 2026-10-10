@@ -49,8 +49,27 @@
   #banner img { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; background: rgba(0,0,0,.2); }
   #banner .t { font-weight: 800; font-size: 17px; }
   #banner .q { font-size: 15px; }
+  #banner mark { color: inherit; background: rgba(0,0,0,.18); border-radius: 3px; padding: 0 3px; }
   #banner .ack { margin-left: auto; font-weight: 800; font-size: 12px; white-space: nowrap; }
   @keyframes flash { 50% { background: #7a5410; color: var(--alert); } }
+
+  /* --- Nur-Alarm-Ansicht (Popup) ------------------------------------------- */
+  #idle { display: none; }
+  #popclose { display: none; }
+  body.alarmonly header, body.alarmonly #editbar, body.alarmonly #board { display: none !important; }
+  body.alarmonly { height: 100%; }
+  body.alarmonly #idle { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+                         text-align: center; padding: 16px; color: var(--dim); }
+  body.alarmonly #idle b { color: var(--text); font-size: 20px; }
+  body.alarmonly #idle .dotline { font-weight: 800; font-size: 13px; }
+  body.alarmonly #banner.show { flex: 1; flex-direction: column; justify-content: center; text-align: center; gap: 10px; padding: 18px; }
+  body.alarmonly #banner.show + #idle { display: none; }
+  body.alarmonly #banner img { width: 72px; height: 72px; }
+  body.alarmonly #banner .t { font-size: 20px; }
+  body.alarmonly #banner .q { font-size: 19px; }
+  body.alarmonly #banner .ack { margin: 0; }
+  body.alarmonly #popclose { display: block; position: fixed; right: 10px; top: 8px; z-index: 20; background: transparent;
+                             border: 0; color: var(--faint); font-size: 13px; font-weight: 800; cursor: pointer; }
 
   /* --- Board -------------------------------------------------------------- */
   #board { display: flex; gap: 14px; padding: 14px; overflow-x: auto; flex: 1 1 auto; min-height: 0; align-items: stretch; }
@@ -197,9 +216,12 @@
     <label for="kw">Mein Name</label><input id="kw" placeholder="z. B. Tjark, Tjarki" autocomplete="off">
   </div>
   <div class="spacer"></div>
+  <button id="popBtn" class="btn" title="Kleines Fenster, das nur den Alarm zeigt">🔔 Alarm-Popup</button>
   <button id="editBtn" class="btn" title="Wer erscheint und in welcher Reihenfolge – nur für dieses Gerät">✎ Dashboard anpassen</button>
 </header>
 <div id="banner"><img id="bimg" alt=""><div><div class="t" id="bt"></div><div class="q" id="bq"></div></div><div class="ack">TIPPEN = GESEHEN</div></div>
+<div id="idle"><img src="/icon.png" alt="" width="56" height="56"><b>Kein Alarm</b><div id="idlename"></div><div class="dotline" id="idlestate"></div></div>
+<button id="popclose" title="Zur vollen Ansicht">✕ Volle Ansicht</button>
 <div id="editbar"><b>Dashboard anpassen</b><span>Kacheln ziehen oder mit ◀ ▶ verschieben · 👁 blendet ein/aus · ↵ = ab hier zweite Zeile · gilt nur für dieses Gerät. Personen anlegen und löschen geht nur am ShowCom-Rechner.</span><button id="doneBtn" class="btn active">Fertig</button></div>
 <main id="board"></main>
 
@@ -213,7 +235,26 @@ const ACK_KEY = `showcom.ack.${deviceId}`;
 
 let state = null, cards = new Map(), breaks = new Set();
 let ackId = Number(localStorage.getItem(ACK_KEY) || 0);
-let ackLive = new Set(), alertUser = '', alertKey = '', lastAlertKey = '', kwDirty = 0;
+let ackLive = new Set(JSON.parse(localStorage.getItem(ACK_KEY + '.live') || '[]')), alertUser = '', alertKey = '', lastAlertKey = '', kwDirty = 0;
+
+// --- Alarm-Popup: kleines Fenster (bzw. auf dem Handy die eigene Ansicht), das nur den Alarm zeigt ----
+const alarmOnly = new URLSearchParams(location.search).has('nuralarm');
+if (alarmOnly) { document.body.classList.add('alarmonly'); document.title = 'ShowCom · Alarm'; }
+$('popBtn').onclick = () => {
+  const url = location.pathname + '?nuralarm';
+  const small = matchMedia('(pointer: fine)').matches && innerWidth > 700;
+  const w = small ? window.open(url, 'showcom-alarm-' + deviceId, 'popup,width=460,height=280') : null;
+  if (!w) location.href = url;   // Handy/Tablet oder Popup blockiert: diese Seite wird zur Alarm-Ansicht
+};
+$('popclose').onclick = () => {
+  if (window.opener) window.close(); else location.href = location.pathname;
+};
+// Quittung in einem Fenster gilt auch im anderen
+addEventListener('storage', e => {
+  if (e.key === ACK_KEY) ackId = Math.max(ackId, Number(e.newValue || 0));
+  if (e.key === ACK_KEY + '.live') JSON.parse(e.newValue || '[]').forEach(k => ackLive.add(k));
+  if (state && (e.key === ACK_KEY || e.key === ACK_KEY + '.live')) { alertKey = ''; checkAlert(); render(); }
+});
 
 // --- Hilfen ----------------------------------------------------------------
 function highlight(text, ranges) {
@@ -368,6 +409,7 @@ function acknowledge() {
   const newest = Math.max(0, ...state.entries.filter(e => e.mention).map(e => e.id));
   ackId = Math.max(ackId, newest); localStorage.setItem(ACK_KEY, ackId);
   state.live.filter(l => l.mention).forEach(l => ackLive.add(l.user + ':' + l.utterance));
+  localStorage.setItem(ACK_KEY + '.live', JSON.stringify([...ackLive].slice(-50)));
   alertUser = ''; alertKey = '';
   $('banner').classList.remove('show');
   document.querySelectorAll('.comm.alerting').forEach(c => c.classList.remove('alerting'));
@@ -498,7 +540,8 @@ function updateCard(c, p, index) {
   c.style.setProperty('--status', status);
   c.style.setProperty('--glowY', p.talkback ? '22%' : '45%');
 
-  const sub = [rf.name, p.role].filter(Boolean).join(' · ');
+  const nick = (p.nickname || '').split(',')[0].trim();
+  const sub = [nick ? '„' + nick + '“' : '', rf.name, p.role].filter(Boolean).join(' · ');
   const head = `<div class="num">${String(index + 1).padStart(2, '0')}</div><div class="name">${esc(p.name)}</div>` +
                `<div class="sub">${esc(sub)}</div>` + (rf.assigned ? battSvg(batt) : '');
   if (c._head !== head) { c.querySelector('.head').innerHTML = head; c._head = head; }
@@ -579,7 +622,14 @@ async function poll() {
     }
 
     checkAlert();
-    render();
+    if (alarmOnly) {
+      const kw = (state.device.keywords || '').trim();
+      $('idlename').textContent = kw ? 'Alarm bei: ' + kw : 'Noch kein Name eingetragen – in der vollen Ansicht unter „Mein Name“.';
+      $('idlestate').innerHTML = state.listening ? '<span style="color:var(--ok)">● ShowCom hört zu</span>'
+                                                 : '<span style="color:var(--alert)">❚❚ pausiert</span>';
+    } else {
+      render();
+    }
   } catch (e) {
     $('status').className = 'pill lost';
     $('status').textContent = 'Verbindung verloren';

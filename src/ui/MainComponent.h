@@ -24,6 +24,10 @@ public:
     std::function<void (juce::int64 entryId)> onJump;
     std::function<void()> onVisibilityChanged;
 
+    /** Für das Alarm-Popup: dieselben Angaben wie im Banner. */
+    struct Info { juce::String speaker, role, text, keyword, time; juce::Colour colour; bool phase = true; int more = 0; };
+    Info getInfo() const { return { speaker, role, text, keyword, time, colour, phase, pendingCount }; }
+
     void paint (juce::Graphics&) override;
     void mouseUp (const juce::MouseEvent&) override;
 
@@ -37,6 +41,29 @@ private:
     juce::String speaker, role, text, keyword, time;
     juce::Colour colour;
     juce::String userId;
+};
+
+//==============================================================================
+/** Kleines, immer sichtbares Fenster, das nur den Alarm zeigt. Klick = gesehen. */
+class AlertPopupWindow : public juce::DocumentWindow
+{
+public:
+    AlertPopupWindow (AppController&, AlertBanner&);
+    void closeButtonPressed() override   { setVisible (false); if (onClosed) onClosed(); }
+    std::function<void()> onClosed;
+
+private:
+    class Content : public juce::Component, private juce::Timer
+    {
+    public:
+        Content (AppController& a, AlertBanner& b);
+        void paint (juce::Graphics&) override;
+        void mouseUp (const juce::MouseEvent&) override;
+    private:
+        void timerCallback() override   { repaint(); }
+        AppController& app;
+        AlertBanner& banner;
+    };
 };
 
 //==============================================================================
@@ -89,8 +116,10 @@ private:
     AppController& app;
     Theme::LookAndFeel lnf;
 
-    juce::TextButton listenButton;
+    juce::TextButton listenButton, popupButton;
     juce::Label statusLabel;
+    std::unique_ptr<AlertPopupWindow> alertPopup;
+    void toggleAlertPopup();
     juce::Rectangle<int> headerArea, presenceArea;
     juce::String lastPresence;
     juce::String extraTabUser;   // vom Board geöffnete Person ohne Favoriten-Stern

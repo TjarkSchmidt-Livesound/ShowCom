@@ -1,6 +1,7 @@
 #include "AppController.h"
 
 #include <BinaryData.h>
+#include "Nicknames.h"
 
 AppController::AppController()
 {
@@ -112,7 +113,10 @@ juce::String AppController::buildPrompt() const
 
     juce::StringArray people;
     for (auto& u : state.getUsers())
-        people.add (u.role.isNotEmpty() ? u.name + " (" + u.role + ")" : u.name);
+    {
+        auto who = u.nickname.isNotEmpty() ? u.name + " / " + Nicknames::split (u.nickname).joinIntoString (" / ") : u.name;
+        people.add (u.role.isNotEmpty() ? who + " (" + u.role + ")" : who);
+    }
 
     juce::StringArray keywords;
     keywords.addTokens (s.keywords, ",;\n", "");
@@ -156,6 +160,7 @@ juce::StringArray AppController::buildHotwords() const
     for (auto& u : state.getUsers())
     {
         words.add (u.name);
+        words.addArray (Nicknames::split (u.nickname));
         if (u.role.isNotEmpty())
             words.add (u.role);
     }
@@ -219,10 +224,16 @@ void AppController::applyState()
     o.hotwords = buildHotwords();
     transcriber.setOptions (o);
 
-    if (! keywordsApplied || appliedKeywords != s.keywords || appliedFuzzy != s.fuzzyKeywords)
+    // Spitznamen: steht "Tjark" unter "Mein Name", lösen auch Tjarks Spitznamen den Alarm aus
+    std::vector<std::pair<juce::String, juce::String>> people;
+    for (auto& u : state.getUsers())
+        people.push_back ({ u.name, u.nickname });
+    const auto effective = Nicknames::expandKeywords (s.keywords, people);
+
+    if (! keywordsApplied || appliedKeywords != effective || appliedFuzzy != s.fuzzyKeywords)
     {
-        transcript.setKeywords (s.keywords, s.fuzzyKeywords);
-        appliedKeywords = s.keywords;
+        transcript.setKeywords (effective, s.fuzzyKeywords);
+        appliedKeywords = effective;
         appliedFuzzy = s.fuzzyKeywords;
         keywordsApplied = true;
     }
@@ -278,6 +289,7 @@ void AppController::timerCallback()
         p.id = u.id;
         p.name = u.name;
         p.role = u.role;
+        p.nickname = u.nickname;
         p.colour = "#" + u.colour.toDisplayString (false).toLowerCase();
         p.talkback = u.talkbackLog;
         p.speaking = AppState::logsTalkback (u) && engine.isSpeaking (u.channel);

@@ -27,6 +27,7 @@ struct UserProfile
     juce::String id;            // stabil, UUID
     juce::String name;
     juce::String role;          // z. B. "FOH", "Monitor", "Backline"
+    juce::String nickname;      // Spitzname(n), kommagetrennt, z. B. "Tjarki, TJ"
     juce::String avatarFile;    // Dateiname im Avatar-Ordner (leer = Initialen)
     juce::Colour colour;
     int channel = -1;           // Index des Eingangs am Audio-Interface (0-basiert), -1 = keiner

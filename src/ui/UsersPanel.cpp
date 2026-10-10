@@ -94,7 +94,7 @@ void AvatarPicker::filesDropped (const juce::StringArray& files, int, int)
 //==============================================================================
 UserEditor::UserEditor (AppController& a) : app (a)
 {
-    for (auto* l : { &nameLabel, &roleLabel, &channelLabel, &rfLabel, &thresholdLabel, &colourLabel })
+    for (auto* l : { &nameLabel, &roleLabel, &nickLabel, &channelLabel, &rfLabel, &thresholdLabel, &colourLabel })
     {
         l->setFont (Theme::font (13.0f, true));
         l->setColour (juce::Label::textColourId, Theme::textDim);
@@ -112,7 +112,7 @@ UserEditor::UserEditor (AppController& a) : app (a)
     cutoutToggle.onClick = [this] { commit(); repaint(); };
     addAndMakeVisible (cutoutToggle);
 
-    for (auto* ed : { &nameEditor, &roleEditor })
+    for (auto* ed : { &nameEditor, &roleEditor, &nickEditor })
     {
         ed->setFont (Theme::font (17.0f));
         ed->setIndents (8, 8);
@@ -120,6 +120,9 @@ UserEditor::UserEditor (AppController& a) : app (a)
         addAndMakeVisible (*ed);
     }
     roleEditor.setTextToShowWhenEmpty ("z. B. FOH, Monitor, Licht, Stage", Theme::textFaint);
+    nickEditor.setTextToShowWhenEmpty (Theme::txt ("z. B. Tjarki, TJ"), Theme::textFaint);
+    nickEditor.setTooltip (Theme::txt ("So wird die Person am Talkback gerufen. Mehrere mit Komma trennen. "
+                                       "Steht ihr Name unter „Mein Name“, lösen auch die Spitznamen den Alarm aus."));
 
     channelBox.onChange = [this] { commit(); };
     addAndMakeVisible (channelBox);
@@ -198,6 +201,7 @@ void UserEditor::setUser (const juce::String& id)
     const juce::ScopedValueSetter<bool> svs (loading, true);
     nameEditor.setText (u->name, false);
     roleEditor.setText (u->role, false);
+    nickEditor.setText (u->nickname, false);
     thresholdSlider.setValue (u->thresholdDb, juce::dontSendNotification);
     talkbackToggle.setToggleState (u->talkbackLog, juce::dontSendNotification);
     favoriteToggle.setToggleState (u->favorite, juce::dontSendNotification);
@@ -293,7 +297,10 @@ void UserEditor::refreshRfList()
         if (selected == 1 && curDevice.isNotEmpty())
         {
             // Gerät gerade nicht in der Liste (gelöscht/umbenannt): Zuordnung trotzdem anzeigen
-            refs.push_back ({ curDevice, curChannel, Theme::txt ("Gerät nicht gefunden · Kanal ") + juce::String (curChannel), iem });
+            const auto text = app.wireless.isDisabled (curDevice, curChannel)
+                                ? Theme::txt ("Deaktiviert · Kanal ") + juce::String (curChannel) + Theme::txt ("  (in den Einstellungen abgeschaltet)")
+                                : Theme::txt ("Gerät nicht gefunden · Kanal ") + juce::String (curChannel);
+            refs.push_back ({ curDevice, curChannel, text, iem });
             box.addItem (refs.back().label, (int) refs.size() + 1);
             selected = (int) refs.size() + 1;
         }
@@ -319,6 +326,7 @@ void UserEditor::commit()
     auto u = current();
     u.name = nameEditor.getText().trim().isEmpty() ? u.name : nameEditor.getText().trim();
     u.role = roleEditor.getText().trim();
+    u.nickname = nickEditor.getText().trim();
     u.channel = channelBox.getSelectedId() - 2;
     u.talkbackLog = talkbackToggle.getToggleState();
     u.favorite = favoriteToggle.getToggleState();
@@ -492,8 +500,18 @@ void UserEditor::resized()
     nameLabel.setBounds (top.removeFromTop (20));
     nameEditor.setBounds (top.removeFromTop (38));
     top.removeFromTop (10);
-    roleLabel.setBounds (top.removeFromTop (20));
-    roleEditor.setBounds (top.removeFromTop (38));
+    {
+        // Funktion und Spitzname nebeneinander
+        auto labels = top.removeFromTop (20);
+        auto editors = top.removeFromTop (38);
+        const int half = (editors.getWidth() - 12) / 2;
+        roleLabel.setBounds (labels.removeFromLeft (half));
+        roleEditor.setBounds (editors.removeFromLeft (half));
+        labels.removeFromLeft (12);
+        editors.removeFromLeft (12);
+        nickLabel.setBounds (labels);
+        nickEditor.setBounds (editors);
+    }
 
     b.removeFromTop (6);
     {

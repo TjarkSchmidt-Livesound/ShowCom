@@ -32,8 +32,12 @@ public:
     Family getFamily() const                                           { return family; }
     const std::string& getModel() const                                { return model; }
 
-    /** Befehle beim Verbindungsaufbau. */
-    static std::vector<std::string> initialCommands();
+    /** Befehle beim Verbindungsaufbau (alle Kanäle und zusätzlich einzeln – nicht jede Serie kennt Kanal 0). */
+    static std::vector<std::string> initialCommands (int numChannels = 4);
+
+    /** Hat das Gerät schon mit etwas Gültigem geantwortet? */
+    bool hasAnswered() const                                           { return answered; }
+    int getErrorCount() const                                          { return errors; }
 
     /** Gerät als In-Ear-Sender behandeln (Axient Digital PSM), auch bevor das Modell gemeldet ist. */
     void setTransmitterMode (bool b)                                   { transmitterMode = b; if (b) family = Family::adPsm; }
@@ -56,6 +60,8 @@ private:
     std::map<int, bool> txAfMute, rxAfMute;
     std::set<std::string> unknownKeys;
     bool transmitterMode = false;
+    bool answered = false;
+    int errors = 0;
     Family family = Family::unknown;
     std::string model;
 };

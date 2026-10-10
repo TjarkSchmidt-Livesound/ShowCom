@@ -110,6 +110,79 @@ void AlertBanner::paint (juce::Graphics& g)
 }
 
 //==============================================================================
+AlertPopupWindow::AlertPopupWindow (AppController& a, AlertBanner& b)
+    : juce::DocumentWindow (Theme::txt ("ShowCom – Alarm"), Theme::background, juce::DocumentWindow::closeButton)
+{
+    setUsingNativeTitleBar (true);
+    setContentOwned (new Content (a, b), false);
+    setResizable (true, false);
+    setResizeLimits (300, 140, 1200, 600);
+    centreWithSize (460, 190);
+    setAlwaysOnTop (true);
+}
+
+AlertPopupWindow::Content::Content (AppController& a, AlertBanner& b) : app (a), banner (b)
+{
+    setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    startTimerHz (8);
+}
+
+void AlertPopupWindow::Content::mouseUp (const juce::MouseEvent& e)
+{
+    if (e.mouseWasClicked() && banner.isActive())
+        banner.acknowledge();
+}
+
+void AlertPopupWindow::Content::paint (juce::Graphics& g)
+{
+    auto b = getLocalBounds().reduced (14);
+
+    if (! banner.isActive())
+    {
+        // Ruhe: nur ein kleiner Status
+        g.fillAll (Theme::panel);
+        g.setColour (Theme::textDim);
+        g.setFont (Theme::font (20.0f, true));
+        g.drawText (txt ("Kein Alarm"), b.removeFromTop (b.getHeight() / 2), juce::Justification::centredBottom);
+        g.setFont (Theme::font (13.0f, true));
+        const bool listening = app.isListening();
+        g.setColour (listening ? Theme::ok : Theme::alert);
+        g.drawText (listening ? txt ("●  ShowCom hört zu") : txt ("❚❚  pausiert"), b.withTrimmedTop (6), juce::Justification::centredTop);
+        return;
+    }
+
+    const auto info = banner.getInfo();
+    const auto bg = info.phase ? Theme::alert : Theme::alert.darker (0.9f);
+    const auto fg = info.phase ? Theme::background : Theme::alert;
+    g.fillAll (bg);
+
+    auto bottom = b.removeFromBottom (18);
+    g.setColour (fg.withAlpha (0.8f));
+    g.setFont (Theme::font (11.0f, true));
+    g.drawText (txt ("KLICKEN = GESEHEN"), bottom, juce::Justification::centredRight);
+
+    const float side = juce::jmin (64.0f, (float) b.getHeight() * 0.6f);
+    auto left = b.removeFromLeft ((int) side + 12);
+    Theme::drawAvatar (g, left.toFloat().withSizeKeepingCentre (side, side), app.state.getAvatar (banner.getUserId()),
+                       info.speaker, info.colour, false);
+
+    juce::String head;
+    head << (info.keyword.isNotEmpty() ? info.keyword.toUpperCase() : txt ("DEIN NAME")) << txt (" ERWÄHNT");
+    juce::String who;
+    who << info.speaker << (info.role.isNotEmpty() ? " (" + info.role + ")" : juce::String()) << txt ("  ·  ") << info.time;
+    if (info.more > 0)
+        who << "   (+" << info.more << " weitere)";
+
+    g.setColour (fg);
+    g.setFont (Theme::font (19.0f, true));
+    g.drawText (head, b.removeFromTop (26), juce::Justification::centredLeft, true);
+    g.setFont (Theme::font (13.0f, true));
+    g.drawText (who, b.removeFromTop (20), juce::Justification::centredLeft, true);
+    g.setFont (Theme::font (16.0f));
+    g.drawFittedText (txt ("„") + info.text + txt ("“"), b.reduced (0, 2), juce::Justification::topLeft, 4);
+}
+
+//==============================================================================
 bool SetupBar::set (const juce::String& message, const juce::String& action, bool critical)
 {
     if (message == text && action == actionText && critical == isCritical)
@@ -157,6 +230,14 @@ MainComponent::MainComponent (AppController& a) : app (a)
 
     listenButton.onClick = [this] { toggleListening(); };
     addAndMakeVisible (listenButton);
+
+    popupButton.setButtonText (txt ("Alarm-Popup"));
+    popupButton.setTooltip (txt ("Kleines Fenster, immer im Vordergrund, das nur den Alarm zeigt"));
+    popupButton.setClickingTogglesState (false);
+    popupButton.setColour (juce::TextButton::buttonOnColourId, Theme::alert);
+    popupButton.setColour (juce::TextButton::textColourOnId, Theme::background);
+    popupButton.onClick = [this] { toggleAlertPopup(); };
+    addAndMakeVisible (popupButton);
 
     statusLabel.setFont (Theme::font (13.0f));
     statusLabel.setJustificationType (juce::Justification::centredRight);
@@ -219,6 +300,7 @@ MainComponent::MainComponent (AppController& a) : app (a)
 
 MainComponent::~MainComponent()
 {
+    alertPopup.reset();   // greift auf das Banner zu – zuerst schließen
     app.onListeningChanged = nullptr;
     app.onAudioDeviceChanged = nullptr;
     app.transcript.removeListener (this);
@@ -227,6 +309,21 @@ MainComponent::~MainComponent()
     tabs.clearTabs();
     juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
     setLookAndFeel (nullptr);
+}
+
+void MainComponent::toggleAlertPopup()
+{
+    if (alertPopup == nullptr)
+    {
+        alertPopup = std::make_unique<AlertPopupWindow> (app, banner);
+        alertPopup->onClosed = [this] { popupButton.setToggleState (false, juce::dontSendNotification); };
+    }
+
+    const bool show = ! alertPopup->isVisible();
+    alertPopup->setVisible (show);
+    if (show)
+        alertPopup->toFront (false);
+    popupButton.setToggleState (show, juce::dontSendNotification);
 }
 
 int MainComponent::indexOfTab (juce::Component* c) const
@@ -573,6 +670,8 @@ void MainComponent::resized()
     h.removeFromLeft (168);   // Icon + Logo
     listenButton.setBounds (h.removeFromLeft (240));
     h.removeFromLeft (20);
+    popupButton.setBounds (h.removeFromRight (124));
+    h.removeFromRight (12);
 
     const auto& allUsers = app.state.getUsers();
     const int favourites = (int) std::count_if (allUsers.begin(), allUsers.end(), [] (const UserProfile& u) { return u.favorite; });

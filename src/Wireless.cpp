@@ -122,24 +122,38 @@ void ShureClient::run()
 
         if (! socket->connect (host, tcpPort, 3000))
         {
-            setOnline (false, "Keine Verbindung zu " + host + ":" + juce::String (tcpPort));
+            logRaw ("Verbindung zu " + host + ":" + juce::String (tcpPort) + " fehlgeschlagen");
+           #if JUCE_MAC
+            setOnline (false, "Keine Verbindung zu " + host + ":" + juce::String (tcpPort)
+                              + juce::String::fromUTF8 (" – IP/Netzwerk prüfen und in den Systemeinstellungen unter "
+                                                        "Datenschutz & Sicherheit → Lokales Netzwerk „ShowCom“ erlauben"));
+           #else
+            setOnline (false, "Keine Verbindung zu " + host + ":" + juce::String (tcpPort)
+                              + juce::String::fromUTF8 (" – IP-Adresse und Netzwerk(-karte) prüfen"));
+           #endif
             socket.reset();
             wait (3000);
             continue;
         }
 
+        logRaw ("Verbunden mit " + host + ":" + juce::String (tcpPort));
+
         ShureParser parser;
         parser.setTransmitterMode (config.isPsm());
         auto send = [this] (const std::string& cmd) { return socket->write (cmd.data(), (int) cmd.size()) == (int) cmd.size(); };
 
-        for (auto& cmd : ShureParser::initialCommands())
+        const int numChannels = WirelessManager::defaultChannelCount (config);
+        for (auto& cmd : ShureParser::initialCommands (numChannels))
             send (cmd);
 
-        setOnline (true, "Verbunden");
+        // Erst "online", wenn das Gerät tatsächlich antwortet
+        setOnline (false, juce::String::fromUTF8 ("Verbunden – warte auf Antwort …"));
         markAlive();
 
         auto lastRefresh = nowMs();
         auto lastData = nowMs();
+        const auto connectedAt = nowMs();
+        bool reportedOnline = false;
         char buf[4096];
 
         while (! threadShouldExit() && socket->isConnected())
@@ -185,11 +199,24 @@ void ShureClient::run()
                 }
             }
 
-            // Akku- und Namenswerte regelmäßig neu holen (Meter kommen jede Sekunde von selbst)
+            if (! reportedOnline && parser.hasAnswered())
+            {
+                setOnline (true, "Verbunden");
+                reportedOnline = true;
+            }
+            else if (! reportedOnline && nowMs() - connectedAt > 6000)
+            {
+                setOnline (false, juce::String::fromUTF8 ("Verbunden, aber keine Antwort – ist Port 2202 das Steuer-Netzwerk "
+                                                          "des Geräts (nicht Dante)? Bei Axient Digital: Netzwerk-Steuerung aktiv?"));
+            }
+
+            // Akku- und Namenswerte regelmäßig neu holen (Meter kommen von selbst)
             if (nowMs() - lastRefresh > 10000)
             {
                 if (! send (ShureParser::refreshCommand()))
                     break;
+                for (int ch = 1; ch <= numChannels && ! parser.hasAnswered(); ++ch)
+                    send ("< GET " + std::to_string (ch) + " ALL >");
                 lastRefresh = nowMs();
             }
 
@@ -199,6 +226,7 @@ void ShureClient::run()
 
         socket->close();
         socket.reset();
+        logRaw ("Verbindung getrennt");
         setOnline (false, juce::String::fromUTF8 ("Verbindung verloren – neuer Versuch ..."));
         wait (2000);
     }
@@ -640,6 +668,9 @@ std::vector<WirelessManager::ChannelRef> WirelessManager::listChannels() const
 
         for (int ch : chans)
         {
+            if (isDisabled (cfg.id, ch))
+                continue;   // abgeschaltete Geräte/Kanäle nicht zur Auswahl anbieten
+
             ChannelRef r;
             r.deviceId = cfg.id;
             r.channel = ch;
@@ -650,8 +681,6 @@ std::vector<WirelessManager::ChannelRef> WirelessManager::listChannels() const
             r.iem = cfg.isPsm() || (known && s.isIemTransmitter);
             if (known && ! s.name.empty())
                 r.label << "  (" << juce::String (s.name) << ")";
-            if (isDisabled (cfg.id, ch))
-                r.label << juce::String::fromUTF8 ("  – deaktiviert");
 
             refs.push_back (r);
         }
