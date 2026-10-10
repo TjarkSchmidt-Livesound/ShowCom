@@ -293,6 +293,24 @@ MainComponent::MainComponent (AppController& a) : app (a)
     app.onListeningChanged = [this] { timerCallback(); };
     app.onAudioDeviceChanged  = [this] { usersPanel.refreshChannels(); };
 
+    // Bitfocus Companion: Alarm abfragen, quittieren, Popup schalten
+    app.getAlarmInfo = [this]
+    {
+        WebServer::Snapshot::Alarm a;
+        a.active = banner.isActive();
+        if (a.active)
+        {
+            const auto info = banner.getInfo();
+            a.keyword = info.keyword;
+            a.userId = banner.getUserId();
+            a.text = info.text;
+            a.time = info.time;
+        }
+        return a;
+    };
+    app.acknowledgeAlarm = [this] { banner.acknowledge(); };
+    app.toggleAlarmPopup = [this] { toggleAlertPopup(); };
+
     timerCallback();
     startTimerHz (15);
     setSize (1280, 820);
@@ -303,6 +321,9 @@ MainComponent::~MainComponent()
     alertPopup.reset();   // greift auf das Banner zu – zuerst schließen
     app.onListeningChanged = nullptr;
     app.onAudioDeviceChanged = nullptr;
+    app.getAlarmInfo = nullptr;
+    app.acknowledgeAlarm = nullptr;
+    app.toggleAlarmPopup = nullptr;
     app.transcript.removeListener (this);
     app.state.removeChangeListener (this);
 

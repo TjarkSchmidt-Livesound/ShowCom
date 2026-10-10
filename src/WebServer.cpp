@@ -25,6 +25,7 @@ namespace
             case 200: return "OK";
             case 204: return "No Content";
             case 400: return "Bad Request";
+            case 403: return "Forbidden";
             case 404: return "Not Found";
             case 405: return "Method Not Allowed";
             case 413: return "Payload Too Large";
@@ -40,6 +41,14 @@ namespace
     bool isValidDeviceId (const juce::String& id)
     {
         return id.length() >= 4 && id.length() <= 16 && id.containsOnly ("ABCDEFGHJKLMNPQRSTUVWXYZ23456789");
+    }
+
+    juce::String queryParam (const juce::String& query, const juce::String& name)
+    {
+        for (auto& kv : juce::StringArray::fromTokens (query, "&", ""))
+            if (kv.upToFirstOccurrenceOf ("=", false, false) == name)
+                return juce::URL::removeEscapeChars (kv.fromFirstOccurrenceOf ("=", false, false).replaceCharacter ('+', ' '));
+        return {};
     }
 
     juce::var rfJson (const WebServer::Person& p)
@@ -244,9 +253,14 @@ void WebServer::serve (std::unique_ptr<juce::StreamingSocket> socket)
     const auto target = requestLine[1];
 
     int contentLength = 0;
+    juce::String headerKey;
     for (auto& l : lines)
+    {
         if (l.startsWithIgnoreCase ("content-length:"))
             contentLength = l.fromFirstOccurrenceOf (":", false, false).trim().getIntValue();
+        else if (l.startsWithIgnoreCase ("x-showcom-key:"))
+            headerKey = l.fromFirstOccurrenceOf (":", false, false).trim();
+    }
 
     // Body (in Bytes; der Kopf ist ASCII)
     const int bodyStart = (int) head.getNumBytesAsUTF8() + 4;
@@ -267,7 +281,7 @@ void WebServer::serve (std::unique_ptr<juce::StreamingSocket> socket)
                                        juce::jmin (contentLength, (int) data.getSize() - bodyStart));
 
     const auto res = contentLength >= maxRequestBytes ? textResponse ("too large", 413, "text/plain")
-                                                      : handle (method, target, body, socket->getHostName());
+                                                      : handle (method, target, body, socket->getHostName(), headerKey);
 
     juce::String header;
     header << "HTTP/1.1 " << res.status << " " << reasonPhrase (res.status) << "\r\n"
@@ -299,11 +313,55 @@ WebServer::Response WebServer::jsonResponse (const juce::var& v, int code) const
 }
 
 WebServer::Response WebServer::handle (const juce::String& method, const juce::String& target, const juce::String& body,
-                                       const juce::String& clientAddress)
+                                       const juce::String& clientAddress, const juce::String& headerKey)
 {
     const auto path = target.upToFirstOccurrenceOf ("?", false, false);
+    const auto query = target.fromFirstOccurrenceOf ("?", false, false);
     auto parts = juce::StringArray::fromTokens (path, "/", "");
     parts.removeEmptyStrings();
+
+    // --- Bitfocus Companion ----------------------------------------------------------
+    if (parts.size() == 3 && parts[0] == "api" && parts[1] == "companion")
+    {
+        std::shared_ptr<const Snapshot> snap;
+        {
+            const juce::ScopedLock sl (snapshotLock);
+            snap = snapshot;
+        }
+
+        if (! snap->companionEnabled)
+            return jsonResponse (juce::var ("companion disabled"), 403);
+
+        if (snap->companionKey.isNotEmpty())
+        {
+            auto key = headerKey;
+            if (key.isEmpty())
+                key = queryParam (query, "key");
+            if (key != snap->companionKey)
+                return jsonResponse (juce::var ("wrong key"), 403);
+        }
+
+        if (method == "GET" && parts[2] == "state")
+            return companionState (query);
+
+        if (method == "POST" && parts[2] == "command")
+        {
+            if (! snap->companionControl)
+                return jsonResponse (juce::var ("control disabled"), 403);
+
+            const auto json = juce::JSON::parse (body);
+            const auto cmd = json.isObject() ? json["cmd"].toString() : body.trim();
+            static const juce::StringArray allowed { "ack", "listen", "pause", "toggleListen", "testAlarm", "popup" };
+            if (! allowed.contains (cmd))
+                return jsonResponse (juce::var ("unknown command"), 400);
+
+            if (onCompanionCommand)
+                onCompanionCommand (cmd);
+            return jsonResponse (juce::var (true));
+        }
+
+        return jsonResponse (juce::var ("unknown action"), 404);
+    }
 
     // --- Seiten ------------------------------------------------------------------
     if (method == "GET" && (path == "/" || path == "/index.html"))
@@ -552,6 +610,125 @@ WebServer::Response WebServer::stateJson (const juce::String& deviceId)
     auto* root = new juce::DynamicObject();
     root->setProperty ("device", juce::var (dev));
     root->setProperty ("listening", snap->listening);
+    root->setProperty ("persons", persons);
+    root->setProperty ("entries", entries);
+    root->setProperty ("live", live);
+    return jsonResponse (juce::var (root));
+}
+
+//==============================================================================
+WebServer::Response WebServer::companionState (const juce::String& query)
+{
+    std::shared_ptr<const Snapshot> snap;
+    {
+        const juce::ScopedLock sl (snapshotLock);
+        snap = snapshot;
+    }
+
+    const auto since = queryParam (query, "since").getLargeIntValue();
+
+    std::vector<std::pair<juce::String, juce::String>> people;
+    std::map<juce::String, juce::String> names;
+    for (auto& p : snap->persons)
+    {
+        people.push_back ({ p.name, p.nickname });
+        names[p.id] = p.name;
+    }
+
+    KeywordMatcher hostMatcher;
+    hostMatcher.setKeywords (snap->hostKeywords.toStdString());
+
+    auto entryJson = [&] (const Entry& e)
+    {
+        auto* o = new juce::DynamicObject();
+        o->setProperty ("id", e.id);
+        o->setProperty ("user", e.userId);
+        o->setProperty ("name", names.count (e.userId) ? names[e.userId] : juce::String());
+        o->setProperty ("time", e.time);
+        o->setProperty ("text", e.text);
+        o->setProperty ("hostMention", ! hostMatcher.findMatches (e.text.toStdString()).empty());
+        return juce::var (o);
+    };
+
+    juce::Array<juce::var> persons, entries, live;
+
+    for (auto& p : snap->persons)
+    {
+        auto* o = new juce::DynamicObject();
+        o->setProperty ("id", p.id);
+        o->setProperty ("name", p.name);
+        o->setProperty ("nickname", p.nickname);
+        o->setProperty ("role", p.role);
+        o->setProperty ("colour", p.colour);
+        o->setProperty ("talkback", p.talkback);
+        o->setProperty ("speaking", p.speaking);
+        o->setProperty ("favorite", p.favorite);
+
+        auto* rf = new juce::DynamicObject();
+        const bool rfLive = p.rfAssigned && ! p.rfDisabled && p.rfOnline && p.rfKnown;
+        rf->setProperty ("assigned", p.rfAssigned && ! p.rfDisabled);
+        rf->setProperty ("online", p.rfAssigned && ! p.rfDisabled && p.rfOnline);
+        if (rfLive)
+        {
+            const auto& s = p.rf;
+            rf->setProperty ("txOn", s.txOn);
+            rf->setProperty ("name", juce::String (s.name));
+            rf->setProperty ("battery", s.batteryPercentEstimate());
+            rf->setProperty ("minutes", s.batteryMinutes);
+            rf->setProperty ("signal", juce::roundToInt (s.signalNormalised() * 100.0f));
+            rf->setProperty ("afMuted", s.afMuted);
+            rf->setProperty ("rfMuted", s.rfMuted);
+            rf->setProperty ("freq", s.frequencyKHz);
+        }
+        o->setProperty ("rf", juce::var (rf));
+
+        if (p.iemAssigned && ! p.iemDisabled)
+        {
+            auto* iem = new juce::DynamicObject();
+            const bool iemLive = p.iemOnline && p.iemKnown;
+            iem->setProperty ("online", iemLive);
+            iem->setProperty ("rfOn", iemLive && p.iem.rfOn);
+            if (iemLive && ! std::isnan (p.iem.inputLeftDb))  iem->setProperty ("l", juce::roundToInt (p.iem.inputLeftDb));
+            if (iemLive && ! std::isnan (p.iem.inputRightDb)) iem->setProperty ("r", juce::roundToInt (p.iem.inputRightDb));
+            o->setProperty ("iem", juce::var (iem));
+        }
+
+        if (! p.level.empty())
+            o->setProperty ("level", juce::roundToInt (p.level.back() * 100.0f));
+
+        persons.add (juce::var (o));
+    }
+
+    juce::int64 lastId = 0;
+    for (auto& e : snap->entries)
+    {
+        lastId = juce::jmax (lastId, e.id);
+        if (e.id > since)
+            entries.add (entryJson (e));
+    }
+    while (entries.size() > 50)
+        entries.remove (0);
+
+    for (auto& e : snap->live)
+        live.add (entryJson (e));
+
+    auto* alarm = new juce::DynamicObject();
+    alarm->setProperty ("active", snap->alarm.active);
+    alarm->setProperty ("keyword", snap->alarm.keyword);
+    alarm->setProperty ("user", snap->alarm.userId);
+    alarm->setProperty ("name", names.count (snap->alarm.userId) ? names[snap->alarm.userId] : juce::String());
+    alarm->setProperty ("text", snap->alarm.text);
+    alarm->setProperty ("time", snap->alarm.time);
+
+    auto* root = new juce::DynamicObject();
+    root->setProperty ("app", "ShowCom");
+    root->setProperty ("version", snap->appVersion);
+    root->setProperty ("listening", snap->listening);
+    root->setProperty ("control", snap->companionControl);
+    root->setProperty ("keywords", snap->hostKeywords);
+    root->setProperty ("mentionCount", snap->mentionCount);
+    root->setProperty ("alarm", juce::var (alarm));
+    root->setProperty ("lastEntryId", lastId);
     root->setProperty ("persons", persons);
     root->setProperty ("entries", entries);
     root->setProperty ("live", live);

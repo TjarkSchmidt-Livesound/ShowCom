@@ -171,6 +171,12 @@ private:
     juce::OwnedArray<WebDeviceRow> webRows;
     juce::String webRowsKey;
 
+    // Bitfocus Companion
+    juce::ToggleButton companionToggle { txtInit ("Bitfocus Companion darf ShowCom abfragen (Alarm, Namen, Funk, Sprecher)") };
+    juce::ToggleButton companionControlToggle { txtInit ("Companion darf steuern (Alarm quittieren, Zuhören an/aus, Popup, Testalarm)") };
+    juce::Label companionKeyLabel { {}, txtInit ("Schlüssel (optional)") }, companionInfo;
+    juce::TextEditor companionKeyEditor;
+
     // Transkription
     juce::Label modelLabel, modelStatus;
     juce::TextButton chooseModelButton { txtInit ("Modell wählen …") };

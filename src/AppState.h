@@ -55,6 +55,9 @@ struct AppSettings
     bool webEnabled = true;             // Browser-Zugriff im lokalen Netz
     int webPort = 8080;
     bool liveText = true;               // Zwischenstände schon während des Sprechens
+    bool companionEnabled = true;       // Bitfocus Companion darf den Zustand abfragen
+    bool companionControl = true;       // ... und Befehle schicken (Alarm quittieren, Zuhören an/aus)
+    juce::String companionKey;          // optionaler Schlüssel (leer = keiner)
     juce::StringArray boardOrder;       // eigene Reihenfolge der Kacheln am Host (Personen-IDs)
     juce::StringArray boardHidden;      // am Host ausgeblendete Kacheln
     juce::StringArray boardBreaks;      // Personen, mit denen eine neue Zeile beginnt

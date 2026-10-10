@@ -38,6 +38,7 @@ public:
         std::vector<float> history;            // HF-Verlauf 0..1
         std::vector<float> level;              // Pegelverlauf vom Funkempfänger 0..1 (leer = keiner)
 
+        bool favorite = false;
         bool iemAssigned = false, iemOnline = false, iemKnown = false, iemDisabled = false;
         WirelessChannelState iem;              // In-Ear-Sender (AD PSM)
     };
@@ -56,6 +57,14 @@ public:
         std::vector<Entry> live;      // was gerade gesprochen wird
         bool listening = false;
         std::map<juce::String, std::shared_ptr<juce::MemoryBlock>> avatars;   // userId -> PNG
+
+        // Für Bitfocus Companion
+        struct Alarm { bool active = false; juce::String keyword, userId, text, time; } alarm;
+        juce::String hostKeywords;             // "Mein Name" am Host (inkl. Spitznamen)
+        int mentionCount = 0;
+        bool companionEnabled = true, companionControl = true;
+        juce::String companionKey;
+        juce::String appVersion;
     };
 
     /** Neue Momentaufnahme (beliebiger Thread). */
@@ -99,7 +108,11 @@ public:
     };
 
     Response handle (const juce::String& method, const juce::String& target, const juce::String& body,
-                     const juce::String& clientAddress = {});
+                     const juce::String& clientAddress = {}, const juce::String& headerKey = {});
+
+    /** Befehl von Bitfocus Companion ("ack", "listen", "pause", "toggleListen", "testAlarm", "popup").
+        Wird auf einem Netzwerk-Thread aufgerufen. */
+    std::function<void (const juce::String& command)> onCompanionCommand;
     void setDevicesFile (const juce::File& f);
 
 private:
@@ -107,6 +120,7 @@ private:
     void serve (std::unique_ptr<juce::StreamingSocket>);
 
     Response stateJson (const juce::String& deviceId);
+    Response companionState (const juce::String& query);
     Response jsonResponse (const juce::var&, int status = 200) const;
     Response textResponse (const juce::String& text, int status, const juce::String& type) const;
 

@@ -56,6 +56,14 @@ public:
     std::function<void()> onListeningChanged;
     std::function<void()> onAudioDeviceChanged;
 
+    // Von der Oberfläche gesetzt: Alarm-Zustand für Bitfocus Companion und Fernbedienung
+    std::function<WebServer::Snapshot::Alarm()> getAlarmInfo;
+    std::function<void()> acknowledgeAlarm;
+    std::function<void()> toggleAlarmPopup;
+
+    /** Befehl von Bitfocus Companion ausführen (Message-Thread). */
+    void handleCompanionCommand (const juce::String& cmd);
+
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void timerCallback() override;   // Momentaufnahme für den Webserver
@@ -69,4 +77,8 @@ private:
     bool appliedFuzzy = true;
     bool keywordsApplied = false;
     bool demoMode = false;
+    size_t mentionScanPos = 0;
+    int mentionCount = 0;
+
+    JUCE_DECLARE_WEAK_REFERENCEABLE (AppController)
 };

@@ -1,0 +1,116 @@
+function getConfigFields() {
+	return [
+		{
+			type: 'static-text',
+			id: 'info',
+			width: 12,
+			label: 'ShowCom',
+			value:
+				'In ShowCom unter Einstellungen den Browser-Zugriff und „Bitfocus Companion“ einschalten. ' +
+				'Host und Port stehen dort. Läuft Companion auf demselben Rechner, reicht 127.0.0.1.',
+		},
+		{
+			type: 'textinput',
+			id: 'host',
+			label: 'ShowCom-Rechner (IP oder Name)',
+			width: 6,
+			default: '127.0.0.1',
+		},
+		{
+			type: 'number',
+			id: 'port',
+			label: 'Port',
+			width: 3,
+			default: 8080,
+			min: 1,
+			max: 65535,
+		},
+		{
+			type: 'textinput',
+			id: 'key',
+			label: 'Schlüssel (falls in ShowCom gesetzt)',
+			width: 3,
+			default: '',
+		},
+		{
+			type: 'textinput',
+			id: 'triggers',
+			label: 'Eigene Trigger: Namen/Begriffe, durch Komma getrennt. Varianten mit | (z. B. „Tjark, Licht|LD, Pyro“)',
+			width: 12,
+			default: '',
+		},
+		{
+			type: 'checkbox',
+			id: 'autoPersons',
+			label: 'Für jede Person in ShowCom automatisch einen Trigger anlegen',
+			width: 6,
+			default: true,
+		},
+		{
+			type: 'checkbox',
+			id: 'ignoreSelf',
+			label: 'Nicht auslösen, wenn jemand seinen eigenen Namen sagt',
+			width: 6,
+			default: true,
+		},
+		{
+			type: 'checkbox',
+			id: 'nicknames',
+			label: 'Spitznamen aus ShowCom mitzählen',
+			width: 4,
+			default: true,
+		},
+		{
+			type: 'checkbox',
+			id: 'fuzzy',
+			label: 'Ähnliche Schreibweisen (1 Buchstabe ab 5 Zeichen)',
+			width: 4,
+			default: true,
+		},
+		{
+			type: 'checkbox',
+			id: 'useLive',
+			label: 'Schon während des Sprechens auslösen (Live-Text)',
+			width: 4,
+			default: true,
+		},
+		{
+			type: 'number',
+			id: 'holdSeconds',
+			label: 'Trigger bleibt aktiv für … Sekunden (0 = bis zum Zurücksetzen)',
+			width: 6,
+			default: 0,
+			min: 0,
+			max: 3600,
+		},
+		{
+			type: 'number',
+			id: 'pollInterval',
+			label: 'Abfrage alle … ms',
+			width: 6,
+			default: 250,
+			min: 100,
+			max: 5000,
+		},
+		{
+			type: 'number',
+			id: 'lowBattery',
+			label: 'Akku schwach ab … %',
+			width: 6,
+			default: 25,
+			min: 1,
+			max: 100,
+		},
+		{
+			type: 'number',
+			id: 'weakSignal',
+			label: 'Funksignal schwach ab … %',
+			width: 6,
+			default: 20,
+			min: 1,
+			max: 100,
+		},
+	]
+}
+
+module.exports = { getConfigFields }

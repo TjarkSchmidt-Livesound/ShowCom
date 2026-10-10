@@ -74,6 +74,15 @@ AppController::AppController()
     // Von Anfang an zuhören: Es soll nichts verloren gehen, auch wenn niemand auf "Start" drückt.
     setListening (true);
 
+    web.onCompanionCommand = [weak = juce::WeakReference<AppController> (this)] (const juce::String& cmd)
+    {
+        juce::MessageManager::callAsync ([weak, cmd]
+        {
+            if (auto* self = weak.get())
+                self->handleCompanionCommand (cmd);
+        });
+    };
+
     web.setDevicesFile (AppState::getAppDataDir().getChildFile ("web_devices.json"));
     web.configure (state.getSettings().webEnabled, state.getSettings().webPort);
     startTimerHz (4);
@@ -236,6 +245,8 @@ void AppController::applyState()
         appliedKeywords = effective;
         appliedFuzzy = s.fuzzyKeywords;
         keywordsApplied = true;
+        mentionScanPos = 0;   // Erwähnungen neu zählen
+        mentionCount = 0;
     }
 }
 
@@ -275,13 +286,42 @@ void AppController::injectTestMention()
     transcript.add (std::move (e));
 }
 
+void AppController::handleCompanionCommand (const juce::String& cmd)
+{
+    if      (cmd == "ack")           { if (acknowledgeAlarm) acknowledgeAlarm(); }
+    else if (cmd == "listen")        setListening (true);
+    else if (cmd == "pause")         setListening (false);
+    else if (cmd == "toggleListen")  setListening (! isListening());
+    else if (cmd == "testAlarm")     injectTestMention();
+    else if (cmd == "popup")         { if (toggleAlarmPopup) toggleAlarmPopup(); }
+}
+
 void AppController::timerCallback()
 {
     if (! web.isRunning())
         return;
 
+    const auto& s = state.getSettings();
     auto snap = std::make_shared<WebServer::Snapshot>();
     snap->listening = engine.isListening();
+    snap->companionEnabled = s.companionEnabled;
+    snap->companionControl = s.companionControl;
+    snap->companionKey = s.companionKey;
+    snap->hostKeywords = appliedKeywords;
+    snap->appVersion = juce::JUCEApplicationBase::getInstance() != nullptr
+                         ? juce::JUCEApplicationBase::getInstance()->getApplicationVersion() : juce::String();
+    if (getAlarmInfo)
+        snap->alarm = getAlarmInfo();
+
+    {
+        const auto& all = transcript.getEntries();
+        if (mentionScanPos > all.size())
+            mentionScanPos = 0, mentionCount = 0;   // Protokoll geleert
+        for (; mentionScanPos < all.size(); ++mentionScanPos)
+            if (all[mentionScanPos].isMention())
+                ++mentionCount;
+        snap->mentionCount = mentionCount;
+    }
 
     for (auto& u : state.getUsers())
     {
@@ -292,6 +332,7 @@ void AppController::timerCallback()
         p.nickname = u.nickname;
         p.colour = "#" + u.colour.toDisplayString (false).toLowerCase();
         p.talkback = u.talkbackLog;
+        p.favorite = u.favorite;
         p.speaking = AppState::logsTalkback (u) && engine.isSpeaking (u.channel);
 
         const auto rf = getRfInfo (u);

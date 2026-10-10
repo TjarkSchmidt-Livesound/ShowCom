@@ -293,7 +293,8 @@ namespace
 
 namespace
 {
-    juce::String httpRequest (int port, const juce::String& method, const juce::String& path, const juce::String& body, int& status)
+    juce::String httpRequest (int port, const juce::String& method, const juce::String& path, const juce::String& body, int& status,
+                              const juce::String& extraHeaders = {})
     {
         juce::StreamingSocket s;
         status = 0;
@@ -301,7 +302,7 @@ namespace
             return {};
 
         juce::String req;
-        req << method << " " << path << " HTTP/1.1\r\nHost: localhost\r\nContent-Length: "
+        req << method << " " << path << " HTTP/1.1\r\nHost: localhost\r\n" << extraHeaders << "Content-Length: "
             << (int) body.getNumBytesAsUTF8() << "\r\nConnection: close\r\n\r\n" << body;
         s.write (req.toRawUTF8(), (int) req.getNumBytesAsUTF8());
 
@@ -418,6 +419,57 @@ namespace
                 if (d.id == id)
                     ok = d.order.size() == 3 && d.order[0] == "u2" && d.hidden.count ("u1") == 1;
             check (ok, "Web: Dashboard-Layout wird gespeichert");
+        }
+
+        // --- Bitfocus Companion ------------------------------------------------
+        {
+            juce::CriticalSection cmdLock;
+            juce::StringArray commands;
+            web.onCompanionCommand = [&] (const juce::String& c) { const juce::ScopedLock sl (cmdLock); commands.add (c); };
+
+            auto cs = std::make_shared<WebServer::Snapshot> (*snap);
+            cs->hostKeywords = "Anna, Anni, Annchen";
+            cs->alarm.active = true; cs->alarm.keyword = "Anni"; cs->alarm.userId = "u2"; cs->alarm.text = "Anni, Licht";
+            cs->mentionCount = 1;
+            cs->persons[1].rf.afMuted = true;
+            cs->live.push_back ({ 0, "u1", "20:01:20", "Anna kommst", 6 });
+            web.publish (cs);
+
+            auto c = juce::JSON::parse (httpRequest (18765, "GET", "/api/companion/state?since=1", {}, st));
+            check (st == 200 && c["persons"].size() == 2 && c["entries"].size() == 2 && (juce::int64) c["lastEntryId"] == 3,
+                   "Companion: Zustand mit Personen und neuen Einträgen");
+            check ((bool) c["alarm"]["active"] && c["alarm"]["name"].toString() == "Mia" && (int) c["mentionCount"] == 1,
+                   "Companion: Alarm mit Sprecher");
+            check ((bool) c["entries"][1]["hostMention"] && c["entries"][1]["name"].toString() == "Mia" && c["live"].size() == 1,
+                   "Companion: Erwähnung des Host-Namens markiert, Live-Text dabei");
+            check ((bool) c["persons"][1]["rf"]["afMuted"] && (int) c["persons"][1]["rf"]["battery"] == 64,
+                   "Companion: Funkdaten (Akku, Mute)");
+
+            httpRequest (18765, "POST", "/api/companion/command", R"({"cmd":"ack"})", st);
+            httpRequest (18765, "POST", "/api/companion/command", R"({"cmd":"rm -rf"})", st);
+            check (st == 400, "Companion: unbekannter Befehl abgelehnt");
+            {
+                const juce::ScopedLock sl (cmdLock);
+                check (commands.size() == 1 && commands[0] == "ack", "Companion: Befehl kommt an");
+            }
+
+            cs->companionKey = "geheim";
+            cs->companionControl = false;
+            web.publish (cs);
+            httpRequest (18765, "GET", "/api/companion/state", {}, st);
+            const int noKey = st;
+            httpRequest (18765, "GET", "/api/companion/state?key=geheim", {}, st);
+            const int queryKey = st;
+            httpRequest (18765, "GET", "/api/companion/state", {}, st, "X-ShowCom-Key: geheim\r\n");
+            check (noKey == 403 && queryKey == 200 && st == 200, "Companion: Schlüssel (Query oder Header)");
+            httpRequest (18765, "POST", "/api/companion/command?key=geheim", R"({"cmd":"pause"})", st);
+            check (st == 403, "Companion: Steuerung abschaltbar");
+
+            cs->companionEnabled = false;
+            web.publish (cs);
+            httpRequest (18765, "GET", "/api/companion/state?key=geheim", {}, st);
+            check (st == 403, "Companion: Zugriff abschaltbar");
+            web.onCompanionCommand = nullptr;
         }
 
         web.configure (false, 0);

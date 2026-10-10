@@ -14,6 +14,7 @@
 - **Favoriten**: Oben in der Kopfleiste und als eigene Tabs erscheinen nur Personen mit Stern (Personen → *Favorit*). Ein Klick auf eine andere Kachel öffnet ihren Tab trotzdem.
 - **Browser-Zugriff**: Eingebauter Webserver (Port 8080). Jedes Handy/Tablet/Laptop bekommt automatisch eine eigene Geräte-ID mit eigener Oberfläche, eigenem Dashboard-Layout und eigenem Alarm-Namen (inkl. Ton und Vibration). Personen anlegen, löschen und Geräte entfernen geht nur am Host.
 - **Funk im Netzwerk**: Shure Axient Digital (AD4D/AD4Q, ADX), SLX-D, SLX-D+, QLX-D und Axient Digital PSM (In-Ear, ADTD/ADTQ) über TCP 2202 sowie Sennheiser EW-DX EM 2/EM 4 (SSCv1, UDP 45). Jeder Person werden Mikrofon-Funkstrecke und In-Ear-Sender zugewiesen; der Audiopegel kann direkt vom Empfänger kommen. Geräte und einzelne Kanäle lassen sich abschalten.
+- **Bitfocus Companion**: Eigenes Companion-Modul. Bestimmte Namen oder Begriffe werden zu Triggern für Companion (Licht, Video, OSC …). Dazu kommen Alarm quittieren, Zuhören an/aus und Feedbacks für Sprecher, Mute, Akku, Sender aus und In-Ear sowie Variablen und fertige Tasten.
 - **Eine Person pro Eingang**: Jedes Talkback-Mikro liegt auf einem eigenen Kanal des Audio-Interfaces. Dadurch ist immer eindeutig, wer gesprochen hat – ohne fehleranfällige Stimmerkennung.
 - **Benutzer mit Avataren**: Name, Funktion (FOH, Monitor, Licht …), Farbe, Profilbild (Klick oder Drag & Drop), Eingang und Sprach-Schwelle mit Live-Pegel.
 - **Tabs**: *Konversation* (alle chronologisch), *Erwähnungen*, ein Tab pro Person, *Personen*, *Einstellungen*.
@@ -111,6 +112,7 @@ ctest --test-dir build -C Release --output-on-failure
 
 - `core`: Namenssuche (Umlaute, Mehrwort-Namen, Genitiv, unscharf) und Sprach-Gate.
 - `core` prüft außerdem den Shure-Parser mit Antworten von QLX-D/ULX-D, SLX-D/SLX-D+, Axient Digital (inkl. AF-/RF-Mute) und AD PSM.
+- `companion-module`: `npm test` prüft Namenserkennung, Trigger-Logik und das Modul gegen einen nachgebauten ShowCom-Server.
 - `engine`: Die komplette Audio-Engine mit einem simulierten 8-Kanal-Interface – automatische Kanal-Aktivierung, Schnitt, Zeitstempel, Signalinhalt, Pause – sowie die Netzwerk-Clients gegen einen simulierten Shure-ULX-D- und Sennheiser-EW-DX-Empfänger.
 
 ## Erste Schritte
@@ -141,6 +143,44 @@ Hinweis: Der Webzugriff hat kein Passwort. Nur in vertrauenswürdigen Netzen (Pr
 | ![Web-Oberfläche](docs/web.png) | ![Web-Oberfläche auf dem Handy](docs/web_mobil.png) |
 
 ![Dashboard anpassen im Browser](docs/web_anpassen.png)
+
+## Bitfocus Companion
+
+Mit dem Modul **ShowCom** für [Bitfocus Companion](https://bitfocus.io/companion) (ab Version 4.0) werden Namen im Talkback zu Triggern für Companion. Beispiel: Fällt „Pyro“ oder „Tjark“, leuchtet eine Taste auf dem Stream Deck oder Companion löst einen Ablauf aus.
+
+**Einrichten**
+
+1. In ShowCom unter **Einstellungen → Webzugriff** den Browser-Zugriff einschalten. Unter **Einstellungen → Bitfocus Companion** ist der Zugriff standardmäßig erlaubt. Dort kannst du auch einen Schlüssel setzen und die Steuerung abschalten (dann nur Anzeigen).
+2. Die Datei `showcom-companion-<version>.tgz` aus dem GitHub-Release laden. In Companion unter **Modules → Import module package** importieren.
+3. In Companion unter **Connections** die Verbindung **ShowCom** anlegen. Host und Port eintragen (stehen in den ShowCom-Einstellungen); läuft Companion auf demselben Rechner, `127.0.0.1`.
+
+**Was das Modul kann**
+
+- **Trigger**: Für jede Person automatisch einer (inkl. Spitznamen). Dazu eigene Begriffe, z. B. `Licht|LD, Pyro, Konfetti`. Die Erkennung ist dieselbe wie in ShowCom (Umlaute, Genitiv, unscharf). Mit Live-Text löst der Trigger schon mitten im Satz aus. Optional zählt es nicht, wenn jemand seinen eigenen Namen sagt.
+- **Als Companion-Trigger**: *Triggers → On variable change* auf `$(showcom:trig_<name>_count)` oder Bedingung über das Feedback *Name/Begriff erwähnt*.
+- **Feedbacks**:
+  - Name erwähnt (optional nur von einer bestimmten Person)
+  - Wort in den letzten N Sekunden gehört
+  - ShowCom-Alarm aktiv, hört zu, Verbindung
+  - Person spricht
+  - Funk: Mute AF/RF, Akku schwach, Sender aus/offline, Signal schwach
+  - In-Ear aus
+  - Personenfarbe
+- **Aktionen**:
+  - Alarm quittieren
+  - Zuhören an/aus/umschalten
+  - Alarm-Popup am Rechner
+  - Testalarm
+  - Trigger zurücksetzen oder testweise auslösen
+- **Variablen**:
+  - Alarm (wer, was, wann)
+  - letzter Satz und letzter Trigger
+  - Listen „spricht“, „Akku schwach“, „Mute“, „Sender aus“
+  - pro Trigger: Anzahl, gesagt von, Text, Zeit
+  - pro Person: Akku, Restlaufzeit, Signal, Mute, Sender, In-Ear, zuletzt gesagt
+- **Presets**: fertige Tasten für Alarm, Zuhören, Funk-Sammelanzeigen, jeden Trigger und jede Person.
+
+Technisch fragt das Modul `GET /api/companion/state` ab (Standard alle 250 ms) und schickt Befehle per `POST /api/companion/command`. Ist ein Schlüssel gesetzt, kommt er als Header `X-ShowCom-Key` (oder `?key=`) mit. Alles bleibt im lokalen Netz. Das Modul liegt im Ordner `companion-module/` und wird von GitHub Actions mitgebaut.
 
 ## Funkempfänger anbinden
 

@@ -1,0 +1,25 @@
+{
+	"name": "showcom-companion",
+	"version": "0.10.0",
+	"description": "Bitfocus Companion module for ShowCom (talkback transcription, name triggers, wireless monitoring)",
+	"main": "src/main.js",
+	"private": true,
+	"scripts": {
+		"test": "node --test test/module.test.js",
+		"package": "companion-module-build"
+	},
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/TjarkSchmidt-Livesound/ShowCom.git"
+	},
+	"engines": {
+		"node": ">=22"
+	},
+	"dependencies": {
+		"@companion-module/base": "~1.12.1"
+	},
+	"devDependencies": {
+		"@companion-module/tools": "^2.4.2"
+	}
+}

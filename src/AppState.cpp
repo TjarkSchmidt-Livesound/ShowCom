@@ -76,6 +76,9 @@ void AppState::load()
             settings.webEnabled       = flag ("webEnabled", true);
             settings.webPort          = s->hasProperty ("webPort") ? juce::jlimit (1024, 65535, (int) s->getProperty ("webPort")) : 8080;
             settings.liveText         = flag ("liveText", true);
+            settings.companionEnabled = flag ("companionEnabled", true);
+            settings.companionControl = flag ("companionControl", true);
+            settings.companionKey     = str ("companionKey", {});
             settings.boardOrder       = BoardLayout::sanitise (s->getProperty ("boardOrder"));
             settings.boardHidden      = BoardLayout::sanitise (s->getProperty ("boardHidden"));
             settings.boardBreaks      = BoardLayout::sanitise (s->getProperty ("boardBreaks"));
@@ -159,6 +162,9 @@ void AppState::save() const
     s->setProperty ("webEnabled",       settings.webEnabled);
     s->setProperty ("webPort",          settings.webPort);
     s->setProperty ("liveText",         settings.liveText);
+    s->setProperty ("companionEnabled", settings.companionEnabled);
+    s->setProperty ("companionControl", settings.companionControl);
+    s->setProperty ("companionKey",     settings.companionKey);
     s->setProperty ("boardOrder",       settings.boardOrder);
     s->setProperty ("boardHidden",      settings.boardHidden);
     s->setProperty ("boardBreaks",      settings.boardBreaks);

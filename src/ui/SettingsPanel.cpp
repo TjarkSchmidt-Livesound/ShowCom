@@ -370,6 +370,30 @@ SettingsPanel::SettingsPanel (AppController& a)
     webInfo.setJustificationType (juce::Justification::topLeft);
     content.addAndMakeVisible (webInfo);
 
+    // --- Bitfocus Companion ----------------------------------------------
+    companionToggle.onClick = [this] { store ([v = companionToggle.getToggleState()] (AppSettings& s) { s.companionEnabled = v; }); };
+    content.addAndMakeVisible (companionToggle);
+    companionControlToggle.onClick = [this] { store ([v = companionControlToggle.getToggleState()] (AppSettings& s) { s.companionControl = v; }); };
+    content.addAndMakeVisible (companionControlToggle);
+
+    companionKeyLabel.setFont (Theme::font (13.0f, true));
+    companionKeyLabel.setColour (juce::Label::textColourId, Theme::textDim);
+    content.addAndMakeVisible (companionKeyLabel);
+
+    companionKeyEditor.setInputRestrictions (40);
+    companionKeyEditor.setIndents (8, 7);
+    companionKeyEditor.setTextToShowWhenEmpty (txt ("leer = jeder im Netz darf zugreifen"), Theme::textDim);
+    companionKeyEditor.onReturnKey = [this] { companionKeyEditor.unfocusAllComponents(); };
+    companionKeyEditor.onFocusLost = [this]
+    {
+        store ([k = companionKeyEditor.getText().trim().removeCharacters (" &?#=")] (AppSettings& s) { s.companionKey = k; });
+    };
+    content.addAndMakeVisible (companionKeyEditor);
+
+    companionInfo.setFont (Theme::font (14.0f));
+    companionInfo.setJustificationType (juce::Justification::topLeft);
+    content.addAndMakeVisible (companionInfo);
+
     // --- Funkempfänger ------------------------------------------------------
     wirelessHint.setText (txt ("Empfänger im selben Netzwerk wie dieser Rechner. Shure (Axient Digital/ADX, SLX-D, SLX-D+, QLX-D, "
                                "Axient Digital PSM): Steuerung über TCP-Port 2202 (Standard, nichts einzustellen). "
@@ -553,6 +577,12 @@ void SettingsPanel::loadFromState()
     webToggle.setToggleState (s.webEnabled, juce::dontSendNotification);
     if (! webPortEditor.hasKeyboardFocus (true))
         webPortEditor.setText (juce::String (s.webPort), false);
+
+    companionToggle.setToggleState (s.companionEnabled, juce::dontSendNotification);
+    companionControlToggle.setToggleState (s.companionControl, juce::dontSendNotification);
+    companionControlToggle.setEnabled (s.companionEnabled);
+    if (! companionKeyEditor.hasKeyboardFocus (true))
+        companionKeyEditor.setText (s.companionKey, false);
 }
 
 void SettingsPanel::store (const std::function<void (AppSettings&)>& change)
@@ -601,6 +631,26 @@ void SettingsPanel::timerCallback()
 
         if (webInfo.getText() != info)
             webInfo.setText (info, juce::dontSendNotification);
+
+        // Verbindungsdaten für das Companion-Modul
+        juce::String cinfo;
+        const auto& cs = app.state.getSettings();
+        if (! cs.webEnabled)
+            cinfo = txt ("Companion nutzt den Browser-Zugriff – bitte oben einschalten.");
+        else if (! cs.companionEnabled)
+            cinfo = txt ("Companion-Zugriff ist ausgeschaltet.");
+        else
+        {
+            const auto urls = app.web.getUrls();
+            auto host = urls.isEmpty() ? juce::String ("127.0.0.1") : urls[0].fromFirstOccurrenceOf ("//", false, false).upToLastOccurrenceOf (":", false, false);
+            cinfo << txt ("Im Companion-Modul \"ShowCom\" eintragen:  Host ") << host << "   Port " << app.web.getPort()
+                  << (cs.companionKey.isNotEmpty() ? txt ("   Schlüssel wie oben") : juce::String())
+                  << txt ("\nLäuft Companion auf diesem Rechner, geht auch Host 127.0.0.1. Das Modul liegt jedem Release als showcom-companion-*.tgz bei "
+                          "(Companion ≥ 4.0: Modules → Import module package).");
+        }
+        if (companionInfo.getText() != cinfo)
+            companionInfo.setText (cinfo, juce::dontSendNotification);
+        companionInfo.setColour (juce::Label::textColourId, cs.webEnabled && cs.companionEnabled ? Theme::text : Theme::textDim);
         webInfo.setColour (juce::Label::textColourId, app.web.isRunning() ? Theme::text : Theme::alert);
 
         juce::String key;
@@ -811,6 +861,17 @@ void SettingsPanel::Content::resized()
     o.webInfo.setBounds (row (58));
     for (auto* r : o.webRows)
         r->setBounds (row (50));
+    endSection();
+
+    beginSection ("Bitfocus Companion");
+    o.companionToggle.setBounds (row (26));
+    o.companionControlToggle.setBounds (row (26));
+    {
+        auto r = row (30);
+        o.companionKeyLabel.setBounds (r.removeFromLeft (160));
+        o.companionKeyEditor.setBounds (r.withWidth (juce::jmin (r.getWidth(), 300)));
+    }
+    o.companionInfo.setBounds (row (58));
     endSection();
 
     beginSection (txt ("Funkempfänger"));
