@@ -4,7 +4,7 @@
 	"name": "showcom",
 	"shortname": "showcom",
 	"description": "ShowCom: Talkback-Transkription – Namens-Trigger, Alarm, Sprecher und Funküberwachung (Shure/Sennheiser)",
-	"version": "0.10.0",
+	"version": "0.10.1",
 	"license": "MIT",
 	"repository": "git+https://github.com/TjarkSchmidt-Livesound/ShowCom.git",
 	"bugs": "https://github.com/TjarkSchmidt-Livesound/ShowCom/issues",

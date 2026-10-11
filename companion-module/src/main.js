@@ -6,6 +6,7 @@ const { buildActions } = require('./actions')
 const { buildFeedbacks } = require('./feedbacks')
 const { buildVariableDefinitions } = require('./variables')
 const { buildPresets } = require('./presets')
+const { fromLegacy } = require('./legacy')
 
 /**
  * Bitfocus Companion – ShowCom
@@ -37,7 +38,14 @@ class ShowComInstance extends InstanceBase {
 	}
 
 	async configUpdated(config) {
+		// Nur die gemerkte Geräte-ID (ältere ShowCom-Versionen) hat sich geändert: nichts neu starten
+		const strip = (c) => JSON.stringify({ ...c, legacyDevice: undefined })
+		if (this.config && strip(this.config) === strip(config)) {
+			this.config = config
+			return
+		}
 		this.config = config
+		this.legacy = false
 		this.stop()
 		this.state = new ShowComState()
 		this.applyConfig()
@@ -110,36 +118,62 @@ class ShowComInstance extends InstanceBase {
 		let delay = interval
 
 		try {
-			const since = this.state.since()
-			const res = await fetch(`${this.baseUrl()}/api/companion/state?since=${since}`, {
-				headers: this.headers(),
-				signal: AbortSignal.timeout(2500),
-			})
+			let data = null
+			if (!this.legacy) {
+				const since = this.state.since()
+				const res = await fetch(`${this.baseUrl()}/api/companion/state?since=${since}`, {
+					headers: this.headers(),
+					signal: AbortSignal.timeout(2500),
+				})
 
-			if (res.status === 403) {
-				const reason = await res.json().catch(() => '')
-				this.setStatus(
-					InstanceStatus.BadConfig,
-					reason === 'wrong key'
-						? 'Schlüssel falsch (ShowCom → Einstellungen → Bitfocus Companion)'
-						: 'In ShowCom ist der Companion-Zugriff ausgeschaltet',
-				)
-				this.markDisconnected()
-				delay = 3000
-			} else if (!res.ok) {
-				this.setStatus(InstanceStatus.UnknownError, `HTTP ${res.status} – ShowCom zu alt? (ab Version 0.10)`)
-				this.markDisconnected()
-				delay = 3000
-			} else {
-				const data = await res.json()
-				if (data?.app !== 'ShowCom') throw new Error('Keine ShowCom-Antwort')
-				this.setStatus(InstanceStatus.Ok)
+				if (res.status === 404) {
+					// ShowCom vor 0.10: über die normale Browser-Schnittstelle weiter
+					this.legacy = true
+					this.log('info', 'ShowCom ohne Companion-Schnittstelle (vor 0.10) – nutze die Browser-Schnittstelle')
+				} else if (res.status === 403) {
+					const reason = await res.json().catch(() => '')
+					this.setStatus(
+						InstanceStatus.BadConfig,
+						reason === 'wrong key'
+							? 'Schlüssel falsch (ShowCom → Einstellungen → Bitfocus Companion)'
+							: 'In ShowCom ist der Companion-Zugriff ausgeschaltet',
+					)
+					this.markDisconnected()
+					delay = 3000
+				} else if (!res.ok) {
+					this.setStatus(InstanceStatus.UnknownError, `ShowCom antwortet mit HTTP ${res.status}`)
+					this.markDisconnected()
+					delay = 3000
+				} else {
+					data = await res.json()
+					if (data?.app !== 'ShowCom') throw new Error('Antwort kommt nicht von ShowCom (Port richtig?)')
+					this.setStatus(InstanceStatus.Ok)
+				}
+			}
+
+			if (this.legacy) {
+				data = await this.pollLegacy()
+				if (data)
+					this.setStatus(InstanceStatus.Ok, 'Ältere ShowCom-Version: Trigger, Sprecher und Funk gehen; Alarm und Steuerung ab ShowCom 0.10')
+			}
+
+			if (data) {
 				const changed = this.state.apply(data, Date.now())
 				this.updateDefinitions(false)
 				this.publish(changed)
 			}
 		} catch (e) {
-			this.setStatus(InstanceStatus.ConnectionFailure, `ShowCom nicht erreichbar (${this.baseUrl()}) – Webzugriff an?`)
+			const code = e?.cause?.code || e?.name || ''
+			const why =
+				code === 'ECONNREFUSED'
+					? 'Verbindung abgelehnt – läuft ShowCom, ist der Webzugriff an, stimmt der Port?'
+					: code === 'TimeoutError' || code === 'ETIMEDOUT' || code === 'EHOSTUNREACH'
+						? 'keine Antwort – IP richtig, gleiches Netz, Firewall?'
+						: code === 'ENOTFOUND'
+							? 'Rechnername unbekannt – IP-Adresse eintragen'
+							: e?.message || 'unbekannter Fehler'
+			this.setStatus(InstanceStatus.ConnectionFailure, `${this.baseUrl()}: ${why}`)
+			this.log('debug', `Verbindung: ${code} ${e?.message ?? ''}`)
 			this.markDisconnected()
 			delay = 2000
 		}
@@ -147,11 +181,39 @@ class ShowComInstance extends InstanceBase {
 		if (this.running) this.pollTimer = setTimeout(() => this.poll(), delay)
 	}
 
+	/** Ältere ShowCom-Versionen: als eigenes "Gerät" an der Browser-Schnittstelle anmelden und lesen. */
+	async pollLegacy() {
+		let id = String(this.config.legacyDevice || '')
+		if (id) {
+			const res = await fetch(`${this.baseUrl()}/api/d/${id}/state`, { signal: AbortSignal.timeout(2500) })
+			if (res.ok) return fromLegacy(await res.json())
+			if (res.status !== 404) throw new Error(`HTTP ${res.status}`)
+		}
+
+		// Noch kein Gerät (oder am Host entfernt): neu anmelden und die ID merken
+		const reg = await fetch(`${this.baseUrl()}/api/register`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Bitfocus Companion' }),
+			signal: AbortSignal.timeout(2500),
+		})
+		if (!reg.ok) throw new Error(`Anmeldung bei ShowCom fehlgeschlagen (HTTP ${reg.status})`)
+		id = String((await reg.json())?.id || '')
+		if (!id) throw new Error('Antwort kommt nicht von ShowCom (Port richtig?)')
+		this.config = { ...this.config, legacyDevice: id }
+		this.saveConfig(this.config)
+		return null
+	}
+
 	markDisconnected() {
 		if (this.state.setConnected(false)) this.publish(true)
 	}
 
 	async sendCommand(cmd) {
+		if (this.legacy) {
+			this.log('warn', `"${cmd}" geht erst ab ShowCom 0.10 – bitte ShowCom aktualisieren`)
+			return
+		}
 		try {
 			const res = await fetch(`${this.baseUrl()}/api/companion/command`, {
 				method: 'POST',

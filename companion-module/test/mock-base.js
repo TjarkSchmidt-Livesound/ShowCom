@@ -43,6 +43,9 @@ class InstanceBase {
 	setPresetDefinitions(p) {
 		this.presets = p
 	}
+	saveConfig(c) {
+		this.savedConfig = c
+	}
 	checkFeedbacks() {
 		this.calls.checks++
 	}

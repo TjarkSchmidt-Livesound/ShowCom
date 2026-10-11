@@ -213,3 +213,76 @@ test('Modul gegen einen nachgebauten ShowCom-Server', async () => {
 	assert.equal(inst.variables.connected, false)
 	await inst.destroy()
 })
+
+test('Ältere ShowCom-Version (ohne /api/companion): Browser-Schnittstelle', async () => {
+	let registered = 0
+	let entries = [{ id: 7, user: 'u1', time: '20:00:00', text: 'alt' }]
+	const server = http.createServer((req, res) => {
+		if (req.url.startsWith('/api/companion')) {
+			res.writeHead(404)
+			return res.end('not found')
+		}
+		if (req.method === 'POST' && req.url === '/api/register') {
+			registered++
+			res.writeHead(200, { 'Content-Type': 'application/json' })
+			return res.end('{"id":"ABCDEF"}')
+		}
+		if (req.url === '/api/d/ABCDEF/state') {
+			res.writeHead(200, { 'Content-Type': 'application/json' })
+			return res.end(JSON.stringify({
+				device: { id: 'ABCDEF' },
+				listening: true,
+				persons: [
+					{ id: 'u1', name: 'Tjark', nickname: 'TJ', colour: '#ffffff', speaking: false, rf: { assigned: false } },
+					{ id: 'u2', name: 'Mia', nickname: '', colour: '#000000', speaking: true, afMuted: false, rfMuted: true,
+						rf: { assigned: true, online: true, known: true, txOn: true, battery: 15, minutes: 50, signal: 0.6, muted: true },
+						iem: { online: true, rfOn: true, l: -20, r: -21 }, level: [10, 40] },
+				],
+				entries,
+				live: [],
+			}))
+		}
+		res.writeHead(404)
+		res.end()
+	})
+	await new Promise((r) => server.listen(0, '127.0.0.1', r))
+	const port = server.address().port
+
+	const inst = new ShowComInstance({})
+	await inst.init({ host: '127.0.0.1', port, triggers: 'Pyro', pollInterval: 100 })
+	assert.ok(await until(() => inst.variables.connected === true && inst.variables.persons_count === 2))
+	assert.equal(inst.currentStatus, 'ok')
+	assert.match(inst.currentMessage, /0\.10/)
+	assert.equal(inst.savedConfig.legacyDevice, 'ABCDEF', 'Geräte-ID wird gemerkt')
+	assert.equal(inst.variables.p_mia_mute, 'RF')
+	assert.equal(inst.variables.p_mia_signal, 60)
+	assert.equal(inst.variables.p_mia_level, 40)
+
+	entries = [...entries, { id: 8, user: 'u2', time: '20:00:05', text: 'TJ, Pyro steht' }]
+	assert.ok(await until(() => inst.variables.trig_pyro_count === 1 && inst.variables.trig_tjark_count === 1))
+	assert.equal(inst.variables.trig_tjark_by, 'Mia')
+
+	// Speichern der Geräte-ID startet die Verbindung nicht neu
+	await inst.configUpdated(inst.savedConfig)
+	await sleep(300)
+	assert.equal(registered, 1)
+	assert.equal(inst.variables.trig_pyro_count, 1)
+	await inst.destroy()
+	await new Promise((r) => server.close(r))
+})
+
+test('Verbindungsfehler mit verständlicher Ursache', async () => {
+	const probe = http.createServer()
+	await new Promise((r) => probe.listen(0, '127.0.0.1', r))
+	const port = probe.address().port
+	await new Promise((r) => probe.close(r))
+
+	const inst = new ShowComInstance({})
+	try {
+		await inst.init({ host: '127.0.0.1', port, pollInterval: 100 })
+		assert.ok(await until(() => inst.currentStatus === 'connection_failure'))
+		assert.match(inst.currentMessage, /abgelehnt/)
+	} finally {
+		await inst.destroy()
+	}
+})

@@ -1,6 +1,6 @@
 {
 	"name": "showcom-companion",
-	"version": "0.10.0",
+	"version": "0.10.1",
 	"description": "Bitfocus Companion module for ShowCom (talkback transcription, name triggers, wireless monitoring)",
 	"main": "src/main.js",
 	"private": true,

@@ -180,6 +180,8 @@ Mit dem Modul **ShowCom** für [Bitfocus Companion](https://bitfocus.io/companio
   - pro Person: Akku, Restlaufzeit, Signal, Mute, Sender, In-Ear, zuletzt gesagt
 - **Presets**: fertige Tasten für Alarm, Zuhören, Funk-Sammelanzeigen, jeden Trigger und jede Person.
 
+Mit einer älteren ShowCom-Version (vor 0.10) meldet sich das Modul automatisch über die normale Browser-Schnittstelle an (als Gerät „Bitfocus Companion“). Trigger, Sprecher und Funk gehen dann schon. Alarm und Steuerung kommen erst mit ShowCom 0.10.
+
 Technisch fragt das Modul `GET /api/companion/state` ab (Standard alle 250 ms) und schickt Befehle per `POST /api/companion/command`. Ist ein Schlüssel gesetzt, kommt er als Header `X-ShowCom-Key` (oder `?key=`) mit. Alles bleibt im lokalen Netz. Das Modul liegt im Ordner `companion-module/` und wird von GitHub Actions mitgebaut.
 
 ## Funkempfänger anbinden
